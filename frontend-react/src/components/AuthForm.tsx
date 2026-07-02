@@ -1,6 +1,7 @@
 import { useMemo, useState, type FormEvent } from "react";
-import { ArrowRight, LogIn, UserPlus } from "lucide-react";
+import { ArrowRight, Loader2, LogIn, UserPlus } from "lucide-react";
 import type { AuthMode, Session } from "../types";
+import { useCreateUserMutation, useGetUsersQuery } from "../store/api";
 
 type AuthFormProps = {
   mode: AuthMode;
@@ -13,6 +14,11 @@ export function AuthForm({ mode, onSubmit, onSwitchMode }: AuthFormProps) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
 
+  const [createUser, { isLoading: isCreating }] = useCreateUserMutation();
+  const { data: users, isLoading: isLoadingUsers } = useGetUsersQuery();
+
+  const [apiError, setApiError] = useState<string | null>(null);
+
   const title = mode === "login" ? "Login" : "Create user";
   const altAction = mode === "login" ? "Create user" : "Login";
   const Icon = mode === "login" ? LogIn : UserPlus;
@@ -21,14 +27,40 @@ export function AuthForm({ mode, onSubmit, onSwitchMode }: AuthFormProps) {
     if (name.trim()) {
       return name.trim();
     }
-
     return email.split("@")[0] || "Operator";
   }, [email, name]);
 
-  const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
+  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    onSubmit({ name: displayName, email: email.trim() });
+    setApiError(null);
+
+    if (mode === "login") {
+      if (!users) {
+        setApiError("Unable to reach the server. Try again.");
+        return;
+      }
+
+      const matched = users.find((u) => u.email === email.trim());
+      if (!matched) {
+        setApiError("Error while logging in.");
+        return;
+      }
+
+      onSubmit({ name: matched.displayName, email: matched.email });
+    } else {
+      try {
+        const created = await createUser({
+          email: email.trim(),
+          displayName,
+        }).unwrap();
+        onSubmit({ name: created.displayName, email: created.email });
+      } catch {
+        setApiError("Failed to create user.");
+      }
+    }
   };
+
+  const isBusy = isCreating || isLoadingUsers;
 
   return (
     <>
@@ -36,7 +68,12 @@ export function AuthForm({ mode, onSubmit, onSwitchMode }: AuthFormProps) {
         {mode === "signup" && (
           <label>
             <span>Name</span>
-            <input value={name} onChange={(event) => setName(event.target.value)} placeholder="Fabian Romero" autoComplete="name" />
+            <input
+              value={name}
+              onChange={(event) => setName(event.target.value)}
+              placeholder="John Doe"
+              autoComplete="name"
+            />
           </label>
         )}
         <label>
@@ -62,9 +99,12 @@ export function AuthForm({ mode, onSubmit, onSwitchMode }: AuthFormProps) {
             autoComplete={mode === "login" ? "current-password" : "new-password"}
           />
         </label>
-        <button className="primary-button full" type="submit">
-          <Icon size={18} />
-          <span>{title}</span>
+
+        {apiError && <p className="form-error">{apiError}</p>}
+
+        <button className="primary-button full" type="submit" disabled={isBusy}>
+          {isBusy ? <Loader2 size={18} className="spin" /> : <Icon size={18} />}
+          <span>{isBusy ? "Please wait…" : title}</span>
         </button>
       </form>
 

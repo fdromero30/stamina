@@ -1,5 +1,6 @@
-import { Activity, Bot, CheckCircle2, Database, LineChart, Lock, ShieldCheck } from "lucide-react";
+import { Activity, Bot, CheckCircle2, Database, LineChart, Loader2, Lock, ShieldCheck, Users } from "lucide-react";
 import { strategyRows, tradingCoreUrl, usersConfigUrl } from "../data/dashboard";
+import { useGetUsersQuery } from "../store/api";
 import type { Session } from "../types";
 
 type DashboardPageProps = {
@@ -8,6 +9,8 @@ type DashboardPageProps = {
 };
 
 export function DashboardPage({ session, onLogout }: DashboardPageProps) {
+  const { data: apiUsers, isLoading, isError } = useGetUsersQuery();
+
   return (
     <main className="shell">
       <aside className="sidebar">
@@ -81,13 +84,37 @@ export function DashboardPage({ session, onLogout }: DashboardPageProps) {
         </section>
 
         <section className="panel">
-          <div>
-            <h2>Next build step</h2>
-            <p>
-              Connect authenticated users to strategy settings, then let the Python core consume approved configs before sending orders to
-              the broker adapter.
-            </p>
+          <div className="panel-header">
+            <Users size={20} />
+            <h2>Registered users</h2>
           </div>
+          {isLoading && (
+            <p className="panel-muted">
+              <Loader2 size={16} className="spin" /> Loading users…
+            </p>
+          )}
+          {isError && <p className="panel-muted">Could not load users from API.</p>}
+          {apiUsers && apiUsers.length === 0 && <p className="panel-muted">No users registered yet.</p>}
+          {apiUsers && apiUsers.length > 0 && (
+            <table className="user-table">
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>Email</th>
+                  <th>Created</th>
+                </tr>
+              </thead>
+              <tbody>
+                {apiUsers.map((u) => (
+                  <tr key={u.id}>
+                    <td>{u.displayName}</td>
+                    <td>{u.email}</td>
+                    <td>{new Date(u.createdAt).toLocaleDateString()}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
         </section>
       </section>
     </main>

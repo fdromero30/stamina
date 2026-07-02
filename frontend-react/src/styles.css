@@ -429,10 +429,74 @@ h2 {
 }
 
 .panel {
+  align-items: flex-start;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.panel-header {
   align-items: center;
   display: flex;
-  gap: 20px;
-  justify-content: space-between;
+  gap: 10px;
+}
+
+.panel-header h2 {
+  margin-bottom: 0;
+}
+
+.panel-muted {
+  align-items: center;
+  color: #60716c;
+  display: flex;
+  gap: 8px;
+  margin-bottom: 0;
+}
+
+.form-error {
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  border-radius: 6px;
+  color: #b91c1c;
+  font-size: 14px;
+  margin: 0;
+  padding: 10px 12px;
+}
+
+.spin {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.user-table {
+  border-collapse: collapse;
+  font-size: 14px;
+  text-align: left;
+  width: 100%;
+}
+
+.user-table th {
+  border-bottom: 2px solid #dfe6e2;
+  color: #58706b;
+  font-weight: 750;
+  padding: 8px 12px;
+  text-transform: uppercase;
+  font-size: 12px;
+  letter-spacing: 0.5px;
+}
+
+.user-table td {
+  border-bottom: 1px solid #e8efeb;
+  padding: 10px 12px;
+}
+
+.user-table tbody tr:hover {
+  background: #f5f8f6;
 }
 
 @media (max-width: 900px) {
