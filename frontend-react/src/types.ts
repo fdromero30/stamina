@@ -11,3 +11,17 @@ export type StrategyRow = {
   risk: string;
   pnl: string;
 };
+
+/* -------- API types (Users Config backend) -------- */
+
+export type AppUser = {
+  id: string;
+  email: string;
+  displayName: string;
+  createdAt: string;
+};
+
+export type CreateUserRequest = {
+  email: string;
+  displayName: string;
+};
