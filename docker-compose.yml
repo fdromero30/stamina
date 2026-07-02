@@ -1,0 +1,59 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-stamina}
+      POSTGRES_USER: ${POSTGRES_USER:-stamina}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-stamina_dev_password}
+    ports:
+      - "5432:5432"
+    volumes:
+      - stamina_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-stamina} -d ${POSTGRES_DB:-stamina}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  users-config-backend:
+    build:
+      context: ./users-config-backend-java
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-stamina}
+      SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER:-stamina}
+      SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:-stamina_dev_password}
+      SERVER_PORT: 8080
+    ports:
+      - "${JAVA_BACKEND_PORT:-8080}:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  trading-core:
+    build:
+      context: ./trading-core-python
+    environment:
+      ETORO_API_BASE_URL: ${ETORO_API_BASE_URL:-https://api.example-etoro.local}
+      ETORO_API_KEY: ${ETORO_API_KEY:-replace_me}
+      ETORO_ACCOUNT_ID: ${ETORO_ACCOUNT_ID:-replace_me}
+      USERS_CONFIG_API_URL: http://users-config-backend:8080
+    ports:
+      - "${TRADING_CORE_PORT:-8000}:8000"
+    depends_on:
+      - users-config-backend
+
+  frontend:
+    build:
+      context: ./frontend-react
+    environment:
+      VITE_TRADING_CORE_URL: http://localhost:${TRADING_CORE_PORT:-8000}
+      VITE_USERS_CONFIG_API_URL: http://localhost:${JAVA_BACKEND_PORT:-8080}
+    ports:
+      - "${FRONTEND_PORT:-5173}:80"
+    depends_on:
+      - trading-core
+      - users-config-backend
+
+volumes:
+  stamina_postgres_data:
+
