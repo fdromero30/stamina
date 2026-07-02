@@ -1,4 +1,4 @@
-package com.stamina.usersconfig.user;
+package com.stamina.usersconfig.user.entity;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
@@ -26,6 +26,14 @@ public class AppUser {
     @Column(nullable = false)
     private Instant createdAt = Instant.now();
 
+    public AppUser() {
+    }
+
+    public AppUser(String email, String displayName) {
+        this.email = email;
+        this.displayName = displayName;
+    }
+
     public UUID getId() {
         return id;
     }
@@ -50,4 +58,3 @@ public class AppUser {
         return createdAt;
     }
 }
-

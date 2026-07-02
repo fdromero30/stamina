@@ -1,6 +1,6 @@
-package com.stamina.usersconfig.strategy;
+package com.stamina.usersconfig.strategy.entity;
 
-import com.stamina.usersconfig.user.AppUser;
+import com.stamina.usersconfig.user.entity.AppUser;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.FetchType;
@@ -36,6 +36,17 @@ public class StrategyConfig {
 
     @Column(nullable = false)
     private boolean enabled = false;
+
+    public StrategyConfig() {
+    }
+
+    public StrategyConfig(AppUser user, String name, String symbol, BigDecimal maxPositionSize, boolean enabled) {
+        this.user = user;
+        this.name = name;
+        this.symbol = symbol;
+        this.maxPositionSize = maxPositionSize;
+        this.enabled = enabled;
+    }
 
     public UUID getId() {
         return id;
@@ -81,4 +92,3 @@ public class StrategyConfig {
         this.enabled = enabled;
     }
 }
-
