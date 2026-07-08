@@ -8,6 +8,7 @@ import com.stamina.usersconfig.user.entity.AppUser;
 import com.stamina.usersconfig.user.repository.AppUserRepository;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.util.List;
@@ -23,6 +24,7 @@ public class StrategyConfigService {
         this.userRepository = userRepository;
     }
 
+    @Transactional(readOnly = true)
     public List<StrategyResponse> listAll() {
         return strategyRepository.findAll()
             .stream()
@@ -30,6 +32,7 @@ public class StrategyConfigService {
             .toList();
     }
 
+    @Transactional
     public StrategyResponse create(CreateStrategyRequest request) {
         AppUser user = userRepository.findById(request.userId())
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "User not found"));
