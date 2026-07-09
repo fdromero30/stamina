@@ -1,6 +1,7 @@
 export type AuthMode = "login" | "signup";
 
 export type Session = {
+  id: string;
   name: string;
   email: string;
 };
@@ -24,4 +25,25 @@ export type AppUser = {
 export type CreateUserRequest = {
   email: string;
   displayName: string;
+};
+
+/* -------- API Key types -------- */
+
+export type ApiKeyRow = {
+  id: string;
+  label: string;
+  broker: string;
+  maskedKey: string;
+  createdAt: string;
+};
+
+export type CreateApiKeyRequest = {
+  userId: string;
+  label: string;
+  broker: string;
+  apiKey: string;
+};
+
+export type RevealedKeyResponse = {
+  apiKey: string;
 };

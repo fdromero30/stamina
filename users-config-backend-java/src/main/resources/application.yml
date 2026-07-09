@@ -16,6 +16,9 @@ spring:
       hibernate:
         format_sql: true
 
+crypto:
+  master-key: ${CRYPTO_MASTER_KEY:}
+
 etoro:
   api-base-url: ${ETORO_API_BASE_URL:https://api.example-etoro.local}
   api-key: ${ETORO_API_KEY:replace_me}
