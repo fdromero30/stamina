@@ -2,15 +2,11 @@ from fastapi import FastAPI
 from pydantic import BaseModel, Field
 
 from app.bot.engine import TradingBotEngine
-from app.integrations.etoro_client import EtoroClient
+from app.integrations.orders_client import HttpOrdersClient
 from app.settings import settings
 
-broker = EtoroClient(
-    base_url=settings.etoro_api_base_url,
-    api_key=settings.etoro_api_key,
-    account_id=settings.etoro_account_id,
-)
-engine = TradingBotEngine(broker=broker)
+orders_client = HttpOrdersClient(base_url=settings.users_config_api_url)
+engine = TradingBotEngine(orders_client=orders_client)
 
 app = FastAPI(title="Stamina Trading Core", version="0.1.0")
 
@@ -26,7 +22,6 @@ async def health() -> dict[str, object]:
     return {
         "service": "trading-core",
         "status": "ok",
-        "broker": await broker.health(),
     }
 
 
