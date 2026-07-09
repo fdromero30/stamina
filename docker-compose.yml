@@ -23,6 +23,9 @@ services:
       SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER:-stamina}
       SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:-stamina_dev_password}
       SERVER_PORT: 8080
+      ETORO_API_BASE_URL: ${ETORO_API_BASE_URL:-https://api.example-etoro.local}
+      ETORO_API_KEY: ${ETORO_API_KEY:-replace_me}
+      ETORO_ACCOUNT_ID: ${ETORO_ACCOUNT_ID:-replace_me}
     ports:
       - "${JAVA_BACKEND_PORT:-8080}:8080"
     depends_on:
@@ -33,9 +36,6 @@ services:
     build:
       context: ./trading-core-python
     environment:
-      ETORO_API_BASE_URL: ${ETORO_API_BASE_URL:-https://api.example-etoro.local}
-      ETORO_API_KEY: ${ETORO_API_KEY:-replace_me}
-      ETORO_ACCOUNT_ID: ${ETORO_ACCOUNT_ID:-replace_me}
       USERS_CONFIG_API_URL: http://users-config-backend:8080
     ports:
       - "${TRADING_CORE_PORT:-8000}:8000"
