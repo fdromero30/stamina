@@ -1,9 +1,9 @@
-from app.integrations.etoro_client import EtoroClient, OrderRequest
+from app.integrations.orders_client import OrdersClient, OrderRequest
 
 
 class TradingBotEngine:
-    def __init__(self, broker: EtoroClient) -> None:
-        self._broker = broker
+    def __init__(self, orders_client: OrdersClient) -> None:
+        self._orders_client = orders_client
 
     async def run_dry_signal(self) -> dict[str, object]:
         return {
@@ -19,5 +19,5 @@ class TradingBotEngine:
 
     async def submit_market_order(self, symbol: str, side: str, units: float) -> dict[str, object]:
         order = OrderRequest(symbol=symbol, side=side, units=units)
-        return await self._broker.place_order(order)
+        return await self._orders_client.place_order(order)
 
