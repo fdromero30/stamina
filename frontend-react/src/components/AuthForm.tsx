@@ -46,14 +46,14 @@ export function AuthForm({ mode, onSubmit, onSwitchMode }: AuthFormProps) {
         return;
       }
 
-      onSubmit({ name: matched.displayName, email: matched.email });
+      onSubmit({ id: matched.id, name: matched.displayName, email: matched.email });
     } else {
       try {
         const created = await createUser({
           email: email.trim(),
           displayName,
         }).unwrap();
-        onSubmit({ name: created.displayName, email: created.email });
+        onSubmit({ id: created.id, name: created.displayName, email: created.email });
       } catch (error: any) {
         setApiError(error.data?.message || "Failed to create user.");
       }

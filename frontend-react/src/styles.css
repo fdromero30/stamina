@@ -13,7 +13,8 @@ body {
 }
 
 button,
-input {
+input,
+select {
   font: inherit;
 }
 
@@ -30,6 +31,7 @@ button {
 
 h1,
 h2,
+h3,
 p {
   margin-top: 0;
 }
@@ -42,6 +44,11 @@ h1 {
 
 h2 {
   font-size: 18px;
+}
+
+h3 {
+  font-size: 16px;
+  margin-bottom: 12px;
 }
 
 .eyebrow {
@@ -499,6 +506,177 @@ h2 {
   background: #f5f8f6;
 }
 
+/* -------- API Keys page -------- */
+
+.api-keys-panel {
+  gap: 20px;
+}
+
+.api-keys-user-info {
+  align-items: center;
+  background: #f5f8f6;
+  border: 1px solid #e0e8e4;
+  border-radius: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 12px 16px;
+  width: 100%;
+}
+
+.user-info-label {
+  color: #58706b;
+  font-size: 13px;
+  font-weight: 750;
+  text-transform: uppercase;
+}
+
+.user-info-value {
+  color: #17201f;
+  font-weight: 600;
+}
+
+.user-info-separator {
+  color: #c0cec8;
+  margin: 0 4px;
+}
+
+.api-key-form {
+  background: #f8faf9;
+  border: 1px solid #e0e8e4;
+  border-radius: 8px;
+  display: grid;
+  gap: 14px;
+  padding: 18px;
+  width: 100%;
+}
+
+.api-key-form label {
+  display: grid;
+  gap: 6px;
+}
+
+.api-key-form label span {
+  color: #33423f;
+  font-size: 14px;
+  font-weight: 750;
+}
+
+.api-key-form input,
+.api-key-form select {
+  background: #ffffff;
+  border: 1px solid #d7e1dd;
+  border-radius: 6px;
+  color: #17201f;
+  min-height: 42px;
+  padding: 8px 12px;
+  width: 100%;
+}
+
+.api-key-form select {
+  cursor: pointer;
+}
+
+.api-key-form-row {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: 1fr 1fr;
+}
+
+.api-key-form .primary-button {
+  justify-self: start;
+}
+
+.api-keys-list {
+  width: 100%;
+}
+
+.api-key-table {
+  border-collapse: collapse;
+  font-size: 14px;
+  text-align: left;
+  width: 100%;
+}
+
+.api-key-table th {
+  border-bottom: 2px solid #dfe6e2;
+  color: #58706b;
+  font-weight: 750;
+  padding: 8px 12px;
+  text-transform: uppercase;
+  font-size: 12px;
+  letter-spacing: 0.5px;
+}
+
+.api-key-table td {
+  border-bottom: 1px solid #e8efeb;
+  padding: 10px 12px;
+  vertical-align: middle;
+}
+
+.api-key-table tbody tr:hover {
+  background: #f5f8f6;
+}
+
+.api-key-cell {
+  font-family: "SF Mono", "Fira Code", "Fira Mono", Menlo, Consolas, monospace;
+  font-size: 13px;
+}
+
+.masked-key {
+  color: #8a9e98;
+  letter-spacing: 1px;
+}
+
+.revealed-key {
+  background: #fffbe6;
+  border: 1px solid #f5e6a0;
+  border-radius: 4px;
+  color: #7a6200;
+  display: inline-block;
+  font-size: 12px;
+  max-width: 320px;
+  overflow: hidden;
+  padding: 4px 8px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.api-key-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.icon-button {
+  align-items: center;
+  background: transparent;
+  border: 1px solid #d7e1dd;
+  border-radius: 6px;
+  color: #58706b;
+  display: inline-flex;
+  height: 34px;
+  justify-content: center;
+  min-height: 34px;
+  padding: 0;
+  width: 34px;
+}
+
+.icon-button:hover {
+  background: #eef4f1;
+  color: #17201f;
+}
+
+.icon-button.danger:hover {
+  background: #fef2f2;
+  border-color: #fecaca;
+  color: #b91c1c;
+}
+
+.icon-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 @media (max-width: 900px) {
   .landing-shell {
     padding: 18px;
@@ -555,6 +733,10 @@ h2 {
   }
 
   .strategy-row {
+    grid-template-columns: 1fr;
+  }
+
+  .api-key-form-row {
     grid-template-columns: 1fr;
   }
 }
