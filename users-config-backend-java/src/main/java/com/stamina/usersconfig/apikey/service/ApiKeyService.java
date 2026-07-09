@@ -44,7 +44,7 @@ public class ApiKeyService {
 
     @Transactional(readOnly = true)
     public List<ApiKeyResponse> listByUser(UUID userId) {
-        return apiKeyRepository.findByUserId(userId)
+        return apiKeyRepository.findByUserIdWithUser(userId)
                 .stream()
                 .map(entity -> {
                     String publicPlain = cryptoService.decrypt(entity.getEncryptedPublicKey());
