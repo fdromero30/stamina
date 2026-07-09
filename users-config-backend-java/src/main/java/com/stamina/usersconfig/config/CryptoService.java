@@ -57,6 +57,10 @@ public class CryptoService {
         try {
             byte[] combined = Base64.getDecoder().decode(encryptedBase64);
 
+            if (combined.length < GCM_IV_LENGTH) {
+                throw new IllegalArgumentException("Invalid encrypted data: too short");
+            }
+
             byte[] iv = new byte[GCM_IV_LENGTH];
             byte[] ciphertext = new byte[combined.length - GCM_IV_LENGTH];
             System.arraycopy(combined, 0, iv, 0, GCM_IV_LENGTH);
@@ -68,6 +72,8 @@ public class CryptoService {
 
             byte[] plaintext = cipher.doFinal(ciphertext);
             return new String(plaintext, java.nio.charset.StandardCharsets.UTF_8);
+        } catch (IllegalArgumentException e) {
+            throw e;
         } catch (Exception e) {
             throw new RuntimeException("Decryption failed", e);
         }
