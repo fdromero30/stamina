@@ -54,8 +54,8 @@ export function AuthForm({ mode, onSubmit, onSwitchMode }: AuthFormProps) {
           displayName,
         }).unwrap();
         onSubmit({ name: created.displayName, email: created.email });
-      } catch {
-        setApiError("Failed to create user.");
+      } catch (error: any) {
+        setApiError(error.data?.message || "Failed to create user.");
       }
     }
   };
