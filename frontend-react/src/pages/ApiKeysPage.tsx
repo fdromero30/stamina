@@ -20,7 +20,8 @@ export function ApiKeysPage({ session }: ApiKeysPageProps) {
 
   const [label, setLabel] = useState("");
   const [broker, setBroker] = useState("etoro");
-  const [apiKeyValue, setApiKeyValue] = useState("");
+  const [publicKey, setPublicKey] = useState("");
+  const [privateKey, setPrivateKey] = useState("");
   const [formError, setFormError] = useState<string | null>(null);
 
   const [revealedIds, setRevealedIds] = useState<Set<string>>(new Set());
@@ -31,8 +32,8 @@ export function ApiKeysPage({ session }: ApiKeysPageProps) {
     e.preventDefault();
     setFormError(null);
 
-    if (!label.trim() || !apiKeyValue.trim()) {
-      setFormError("Label and API key are required.");
+    if (!label.trim() || !publicKey.trim() || !privateKey.trim()) {
+      setFormError("Label, public key and private key are required.");
       return;
     }
 
@@ -41,10 +42,12 @@ export function ApiKeysPage({ session }: ApiKeysPageProps) {
         userId: session.id,
         label: label.trim(),
         broker: broker.trim(),
-        apiKey: apiKeyValue.trim(),
+        publicKey: publicKey.trim(),
+        privateKey: privateKey.trim(),
       }).unwrap();
       setLabel("");
-      setApiKeyValue("");
+      setPublicKey("");
+      setPrivateKey("");
     } catch (err: any) {
       setFormError(err.data?.message || "Failed to create API key.");
     }
@@ -64,7 +67,8 @@ export function ApiKeysPage({ session }: ApiKeysPageProps) {
     setRevealingId(id);
     try {
       const result = await revealApiKey({ id, userId: session.id }).unwrap();
-      setRevealedKeys((prev) => ({ ...prev, [id]: result.apiKey }));
+      const [pub, priv] = result.apiKey.split("|");
+      setRevealedKeys((prev) => ({ ...prev, [id]: `Public: ${pub}\nPrivate: ${priv}` }));
       setRevealedIds((prev) => {
         const next = new Set(prev);
         next.add(id);
@@ -130,12 +134,22 @@ export function ApiKeysPage({ session }: ApiKeysPageProps) {
           </label>
         </div>
         <label>
-          <span>API Key</span>
+          <span>Public Key</span>
           <input
             required
-            value={apiKeyValue}
-            onChange={(e) => setApiKeyValue(e.target.value)}
-            placeholder="Paste your API key here"
+            value={publicKey}
+            onChange={(e) => setPublicKey(e.target.value)}
+            placeholder="Paste your public key here"
+            type="password"
+          />
+        </label>
+        <label>
+          <span>Private Key</span>
+          <input
+            required
+            value={privateKey}
+            onChange={(e) => setPrivateKey(e.target.value)}
+            placeholder="Paste your private key here"
             type="password"
           />
         </label>

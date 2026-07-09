@@ -6,6 +6,7 @@ public record CreateApiKeyRequest(
     @NotBlank String userId,
     @NotBlank String label,
     @NotBlank String broker,
-    @NotBlank String apiKey
+    @NotBlank String publicKey,
+    @NotBlank String privateKey
 ) {
 }

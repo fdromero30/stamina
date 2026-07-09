@@ -34,11 +34,12 @@ public class ApiKeyService {
         AppUser user = userRepository.findById(UUID.fromString(request.userId()))
                 .orElseThrow(() -> new IllegalArgumentException("User not found: " + request.userId()));
 
-        String encrypted = cryptoService.encrypt(request.apiKey());
+        String encryptedPublic = cryptoService.encrypt(request.publicKey());
+        String encryptedPrivate = cryptoService.encrypt(request.privateKey());
 
-        ApiKey entity = new ApiKey(user, request.label(), request.broker(), encrypted);
+        ApiKey entity = new ApiKey(user, request.label(), request.broker(), encryptedPublic, encryptedPrivate);
         ApiKey saved = apiKeyRepository.save(entity);
-        return toResponse(saved, request.apiKey());
+        return toResponse(saved, request.publicKey(), request.privateKey());
     }
 
     @Transactional(readOnly = true)
@@ -46,26 +47,34 @@ public class ApiKeyService {
         return apiKeyRepository.findByUserId(userId)
                 .stream()
                 .map(entity -> {
-                    String plaintext = cryptoService.decrypt(entity.getEncryptedKey());
-                    return toResponse(entity, plaintext);
+                    String publicPlain = cryptoService.decrypt(entity.getEncryptedPublicKey());
+                    String privatePlain = cryptoService.decrypt(entity.getEncryptedPrivateKey());
+                    return toResponse(entity, publicPlain, privatePlain);
                 })
                 .toList();
     }
 
-    private ApiKeyResponse toResponse(ApiKey entity, String plaintextKey) {
-        String masked;
-        if (plaintextKey.length() <= 8) {
-            masked = plaintextKey.substring(0, Math.min(plaintextKey.length(), 1)) + "****";
-        } else {
-            masked = plaintextKey.substring(0, 4) + "****" + plaintextKey.substring(plaintextKey.length() - 4);
-        }
+    private ApiKeyResponse toResponse(ApiKey entity, String publicPlain, String privatePlain) {
+        String maskedPublic = mask(publicPlain);
+        String maskedPrivate = mask(privatePlain);
+        String combinedMasked = maskedPublic + " / " + maskedPrivate;
         return new ApiKeyResponse(
             entity.getId(),
             entity.getLabel(),
             entity.getBroker(),
-            masked,
+            combinedMasked,
             entity.getCreatedAt()
         );
+    }
+
+    private String mask(String key) {
+        if (key == null || key.isBlank()) {
+            return "****";
+        }
+        if (key.length() <= 8) {
+            return key.substring(0, Math.min(key.length(), 1)) + "****";
+        }
+        return key.substring(0, 4) + "****" + key.substring(key.length() - 4);
     }
 
     @Transactional(readOnly = true)
@@ -77,8 +86,9 @@ public class ApiKeyService {
             throw new IllegalArgumentException("API key does not belong to this user");
         }
 
-        String plaintext = cryptoService.decrypt(entity.getEncryptedKey());
-        return new RevealedKeyResponse(plaintext);
+        String publicPlain = cryptoService.decrypt(entity.getEncryptedPublicKey());
+        String privatePlain = cryptoService.decrypt(entity.getEncryptedPrivateKey());
+        return new RevealedKeyResponse(publicPlain + "|" + privatePlain);
     }
 
     @Transactional
