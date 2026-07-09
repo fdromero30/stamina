@@ -27,7 +27,7 @@ export const usersApi = createApi({
       providesTags: ["ApiKeys"],
     }),
 
-    createApiKey: builder.mutation<ApiKeyRow, CreateApiKeyRequest>({
+    createApiKey: builder.mutation<ApiKeyRow, { userId: string; label: string; broker: string; publicKey: string; privateKey: string }>({
       query: (body) => ({
         url: "/api-keys",
         method: "POST",

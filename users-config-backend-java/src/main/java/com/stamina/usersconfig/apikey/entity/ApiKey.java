@@ -33,7 +33,10 @@ public class ApiKey {
     private String broker;
 
     @Column(nullable = false, length = 1024)
-    private String encryptedKey;
+    private String encryptedPublicKey;
+
+    @Column(nullable = false, length = 1024)
+    private String encryptedPrivateKey;
 
     @Column(nullable = false)
     private Instant createdAt = Instant.now();
@@ -41,11 +44,12 @@ public class ApiKey {
     public ApiKey() {
     }
 
-    public ApiKey(AppUser user, String label, String broker, String encryptedKey) {
+    public ApiKey(AppUser user, String label, String broker, String encryptedPublicKey, String encryptedPrivateKey) {
         this.user = user;
         this.label = label;
         this.broker = broker;
-        this.encryptedKey = encryptedKey;
+        this.encryptedPublicKey = encryptedPublicKey;
+        this.encryptedPrivateKey = encryptedPrivateKey;
     }
 
     public UUID getId() {
@@ -72,12 +76,20 @@ public class ApiKey {
         this.broker = broker;
     }
 
-    public String getEncryptedKey() {
-        return encryptedKey;
+    public String getEncryptedPublicKey() {
+        return encryptedPublicKey;
     }
 
-    public void setEncryptedKey(String encryptedKey) {
-        this.encryptedKey = encryptedKey;
+    public void setEncryptedPublicKey(String encryptedPublicKey) {
+        this.encryptedPublicKey = encryptedPublicKey;
+    }
+
+    public String getEncryptedPrivateKey() {
+        return encryptedPrivateKey;
+    }
+
+    public void setEncryptedPrivateKey(String encryptedPrivateKey) {
+        this.encryptedPrivateKey = encryptedPrivateKey;
     }
 
     public Instant getCreatedAt() {

@@ -41,7 +41,8 @@ export type CreateApiKeyRequest = {
   userId: string;
   label: string;
   broker: string;
-  apiKey: string;
+  publicKey: string;
+  privateKey: string;
 };
 
 export type RevealedKeyResponse = {
