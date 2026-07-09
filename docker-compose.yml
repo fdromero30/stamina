@@ -23,6 +23,7 @@ services:
       SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER:-stamina}
       SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:-stamina_dev_password}
       SERVER_PORT: 8080
+      CRYPTO_MASTER_KEY: ${CRYPTO_MASTER_KEY}
       ETORO_API_BASE_URL: ${ETORO_API_BASE_URL:-https://api.example-etoro.local}
       ETORO_API_KEY: ${ETORO_API_KEY:-replace_me}
       ETORO_ACCOUNT_ID: ${ETORO_ACCOUNT_ID:-replace_me}
