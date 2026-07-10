@@ -24,14 +24,18 @@ public class AppUser {
     private String displayName;
 
     @Column(nullable = false)
+    private String password;
+
+    @Column(nullable = false)
     private Instant createdAt = Instant.now();
 
     public AppUser() {
     }
 
-    public AppUser(String email, String displayName) {
+    public AppUser(String email, String displayName, String password) {
         this.email = email;
         this.displayName = displayName;
+        this.password = password;
     }
 
     public UUID getId() {
@@ -52,6 +56,14 @@ public class AppUser {
 
     public void setDisplayName(String displayName) {
         this.displayName = displayName;
+    }
+
+    public String getPassword() {
+        return password;
+    }
+
+    public void setPassword(String password) {
+        this.password = password;
     }
 
     public Instant getCreatedAt() {

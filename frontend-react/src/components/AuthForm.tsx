@@ -1,7 +1,7 @@
 import { useMemo, useState, type FormEvent } from "react";
 import { ArrowRight, Loader2, LogIn, UserPlus } from "lucide-react";
 import type { AuthMode, Session } from "../types";
-import { useCreateUserMutation, useGetUsersQuery } from "../store/api";
+import { useCreateUserMutation, useLoginMutation } from "../store/api";
 
 type AuthFormProps = {
   mode: AuthMode;
@@ -15,7 +15,7 @@ export function AuthForm({ mode, onSubmit, onSwitchMode }: AuthFormProps) {
   const [password, setPassword] = useState("");
 
   const [createUser, { isLoading: isCreating }] = useCreateUserMutation();
-  const { data: users, isLoading: isLoadingUsers } = useGetUsersQuery();
+  const [login, { isLoading: isLoggingIn }] = useLoginMutation();
 
   const [apiError, setApiError] = useState<string | null>(null);
 
@@ -35,23 +35,21 @@ export function AuthForm({ mode, onSubmit, onSwitchMode }: AuthFormProps) {
     setApiError(null);
 
     if (mode === "login") {
-      if (!users) {
-        setApiError("Unable to reach the server. Try again.");
-        return;
+      try {
+        const user = await login({
+          email: email.trim(),
+          password,
+        }).unwrap();
+        onSubmit({ id: user.id, name: user.displayName, email: user.email });
+      } catch (error: any) {
+        setApiError(error.data?.message || "Invalid email or password.");
       }
-
-      const matched = users.find((u) => u.email === email.trim());
-      if (!matched) {
-        setApiError("Error while logging in.");
-        return;
-      }
-
-      onSubmit({ id: matched.id, name: matched.displayName, email: matched.email });
     } else {
       try {
         const created = await createUser({
           email: email.trim(),
           displayName,
+          password,
         }).unwrap();
         onSubmit({ id: created.id, name: created.displayName, email: created.email });
       } catch (error: any) {
@@ -60,7 +58,7 @@ export function AuthForm({ mode, onSubmit, onSwitchMode }: AuthFormProps) {
     }
   };
 
-  const isBusy = isCreating || isLoadingUsers;
+  const isBusy = isCreating || isLoggingIn;
 
   return (
     <>

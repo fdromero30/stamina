@@ -1,5 +1,6 @@
 package com.stamina.usersconfig.config;
 
+import com.stamina.usersconfig.user.exception.InvalidCredentialsException;
 import com.stamina.usersconfig.user.exception.UserAlreadyExistsException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -21,6 +22,18 @@ public class GlobalExceptionHandler {
 
         return ResponseEntity
                 .status(HttpStatus.CONFLICT)
+                .body(errorResponse);
+    }
+
+    @ExceptionHandler(InvalidCredentialsException.class)
+    public ResponseEntity<Map<String, String>> handleInvalidCredentials(InvalidCredentialsException ex) {
+        Map<String, String> errorResponse = new HashMap<>();
+
+        errorResponse.put("error", "Unauthorized");
+        errorResponse.put("message", ex.getMessage());
+
+        return ResponseEntity
+                .status(HttpStatus.UNAUTHORIZED)
                 .body(errorResponse);
     }
 
