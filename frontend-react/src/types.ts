@@ -25,6 +25,12 @@ export type AppUser = {
 export type CreateUserRequest = {
   email: string;
   displayName: string;
+  password: string;
+};
+
+export type LoginRequest = {
+  email: string;
+  password: string;
 };
 
 /* -------- API Key types -------- */
