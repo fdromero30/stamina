@@ -1,5 +1,5 @@
 import { createApi, fetchBaseQuery } from "@reduxjs/toolkit/query/react";
-import type { ApiKeyRow, AppUser, CreateApiKeyRequest, CreateUserRequest, RevealedKeyResponse } from "../types";
+import type { ApiKeyRow, AppUser, CreateApiKeyRequest, CreateUserRequest, LoginRequest, RevealedKeyResponse } from "../types";
 
 const usersConfigApiUrl = import.meta.env.VITE_USERS_CONFIG_API_URL ?? "http://localhost:8080";
 
@@ -20,6 +20,14 @@ export const usersApi = createApi({
         body,
       }),
       invalidatesTags: ["Users"],
+    }),
+
+    login: builder.mutation<AppUser, LoginRequest>({
+      query: (body) => ({
+        url: "/users/login",
+        method: "POST",
+        body,
+      }),
     }),
 
     getApiKeys: builder.query<ApiKeyRow[], string>({
@@ -56,6 +64,7 @@ export const usersApi = createApi({
 export const {
   useGetUsersQuery,
   useCreateUserMutation,
+  useLoginMutation,
   useGetApiKeysQuery,
   useCreateApiKeyMutation,
   useRevealApiKeyMutation,

@@ -7,6 +7,7 @@ import com.stamina.usersconfig.user.repository.AppUserRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.CommandLineRunner;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
@@ -19,10 +20,12 @@ public class DataSeeder implements CommandLineRunner {
 
     private final AppUserRepository userRepository;
     private final StrategyConfigRepository strategyRepository;
+    private final PasswordEncoder passwordEncoder;
 
-    public DataSeeder(AppUserRepository userRepository, StrategyConfigRepository strategyRepository) {
+    public DataSeeder(AppUserRepository userRepository, StrategyConfigRepository strategyRepository, PasswordEncoder passwordEncoder) {
         this.userRepository = userRepository;
         this.strategyRepository = strategyRepository;
+        this.passwordEncoder = passwordEncoder;
     }
 
     @Override
@@ -34,8 +37,9 @@ public class DataSeeder implements CommandLineRunner {
 
         log.info("Seeding database with initial data…");
 
-        AppUser alice = userRepository.save(new AppUser("alice@stamina.local", "Alice Montenegro"));
-        AppUser bob = userRepository.save(new AppUser("bob@stamina.local", "Bob Carter"));
+        String defaultPassword = passwordEncoder.encode("stamina123");
+        AppUser alice = userRepository.save(new AppUser("alice@stamina.local", "Alice Montenegro", defaultPassword));
+        AppUser bob = userRepository.save(new AppUser("bob@stamina.local", "Bob Carter", defaultPassword));
 
         List.of(
                 new StrategyConfig(alice, "Momentum BTC", "BTCUSDT", new BigDecimal("0.50"), true),
