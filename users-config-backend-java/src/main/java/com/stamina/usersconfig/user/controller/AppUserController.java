@@ -1,6 +1,7 @@
 package com.stamina.usersconfig.user.controller;
 
 import com.stamina.usersconfig.user.dto.CreateUserRequest;
+import com.stamina.usersconfig.user.dto.LoginRequest;
 import com.stamina.usersconfig.user.dto.UserResponse;
 import com.stamina.usersconfig.user.service.AppUserService;
 import jakarta.validation.Valid;
@@ -33,5 +34,10 @@ public class AppUserController {
     @ResponseStatus(HttpStatus.CREATED)
     UserResponse create(@Valid @RequestBody CreateUserRequest request) {
         return userService.create(request);
+    }
+
+    @PostMapping("/login")
+    UserResponse login(@Valid @RequestBody LoginRequest request) {
+        return userService.login(request);
     }
 }
