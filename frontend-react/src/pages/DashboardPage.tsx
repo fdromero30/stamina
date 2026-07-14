@@ -4,16 +4,18 @@ import { strategyRows, tradingCoreUrl, usersConfigUrl } from "../data/dashboard"
 import { useGetUsersQuery } from "../store/api";
 import type { Session } from "../types";
 import { ApiKeysPage } from "./ApiKeysPage";
+import { StrategiesPage } from "./StrategiesPage";
 
 type DashboardPageProps = {
   session: Session;
+  initialView?: DashboardView;
   onLogout: () => void;
 };
 
-type DashboardView = "dashboard" | "apikeys";
+type DashboardView = "dashboard" | "apikeys" | "strategies";
 
-export function DashboardPage({ session, onLogout }: DashboardPageProps) {
-  const [view, setView] = useState<DashboardView>("dashboard");
+export function DashboardPage({ session, initialView = "dashboard", onLogout }: DashboardPageProps) {
+  const [view, setView] = useState<DashboardView>(initialView);
   const { data: apiUsers, isLoading, isError } = useGetUsersQuery();
 
   return (
@@ -25,7 +27,7 @@ export function DashboardPage({ session, onLogout }: DashboardPageProps) {
         </div>
         <nav className="dashboard-nav" aria-label="Dashboard">
           <button className={view === "dashboard" ? "active" : ""} onClick={() => setView("dashboard")}>Dashboard</button>
-          <button>Strategies</button>
+          <button className={view === "strategies" ? "active" : ""} onClick={() => setView("strategies")}>Strategies</button>
           <button>Users</button>
           <button>Risk</button>
           <button className={view === "apikeys" ? "active" : ""} onClick={() => setView("apikeys")}>
@@ -38,6 +40,8 @@ export function DashboardPage({ session, onLogout }: DashboardPageProps) {
       <section className="workspace">
         {view === "apikeys" ? (
           <ApiKeysPage session={session} />
+        ) : view === "strategies" ? (
+          <StrategiesPage session={session} />
         ) : (
           <>
             <header className="topbar">
