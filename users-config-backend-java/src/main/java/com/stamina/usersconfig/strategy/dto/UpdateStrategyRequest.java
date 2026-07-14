@@ -1,19 +1,14 @@
 package com.stamina.usersconfig.strategy.dto;
 
-import jakarta.validation.constraints.DecimalMin;
-import jakarta.validation.constraints.NotBlank;
-import jakarta.validation.constraints.NotNull;
-
 import java.math.BigDecimal;
 import java.time.LocalTime;
 import java.util.UUID;
 
-public record CreateStrategyRequest(
-    @NotNull UUID userId,
-    @NotBlank String name,
-    @NotBlank String symbol,
-    @DecimalMin("0.01") BigDecimal maxPositionSize,
-    boolean enabled,
+public record UpdateStrategyRequest(
+    String name,
+    String symbol,
+    BigDecimal maxPositionSize,
+    Boolean enabled,
 
     // Risk Management
     BigDecimal maxDrawdown,
@@ -34,7 +29,7 @@ public record CreateStrategyRequest(
     BigDecimal breakEvenTrigger,
 
     // ML
-    boolean useML,
+    Boolean useML,
     UUID mlStrategyId
 ) {
 }

@@ -1,6 +1,9 @@
 package com.stamina.usersconfig.config;
 
+import com.stamina.usersconfig.strategy.entity.StopLossType;
 import com.stamina.usersconfig.strategy.entity.StrategyConfig;
+import com.stamina.usersconfig.strategy.repository.MLStrategyRepository;
+import com.stamina.usersconfig.strategy.repository.StopLossTypeRepository;
 import com.stamina.usersconfig.strategy.repository.StrategyConfigRepository;
 import com.stamina.usersconfig.user.entity.AppUser;
 import com.stamina.usersconfig.user.repository.AppUserRepository;
@@ -20,11 +23,19 @@ public class DataSeeder implements CommandLineRunner {
 
     private final AppUserRepository userRepository;
     private final StrategyConfigRepository strategyRepository;
+    private final StopLossTypeRepository stopLossTypeRepository;
+    private final MLStrategyRepository mlStrategyRepository;
     private final PasswordEncoder passwordEncoder;
 
-    public DataSeeder(AppUserRepository userRepository, StrategyConfigRepository strategyRepository, PasswordEncoder passwordEncoder) {
+    public DataSeeder(AppUserRepository userRepository,
+                      StrategyConfigRepository strategyRepository,
+                      StopLossTypeRepository stopLossTypeRepository,
+                      MLStrategyRepository mlStrategyRepository,
+                      PasswordEncoder passwordEncoder) {
         this.userRepository = userRepository;
         this.strategyRepository = strategyRepository;
+        this.stopLossTypeRepository = stopLossTypeRepository;
+        this.mlStrategyRepository = mlStrategyRepository;
         this.passwordEncoder = passwordEncoder;
     }
 
@@ -36,6 +47,19 @@ public class DataSeeder implements CommandLineRunner {
         }
 
         log.info("Seeding database with initial data…");
+
+        // Seed stop loss types
+        if (stopLossTypeRepository.count() == 0) {
+            stopLossTypeRepository.saveAll(List.of(
+                new StopLossType("fixed_pct", "Fixed %", "A fixed percentage stop loss"),
+                new StopLossType("trailing", "Trailing", "Trailing stop loss that follows price"),
+                new StopLossType("atr_multiple", "ATR Multiple", "Stop loss based on ATR multiplier"),
+                new StopLossType("step", "Step", "Step-based stop loss")
+            ));
+            log.info("Seeded stop loss types.");
+        }
+
+        // No seed data for ML strategies — they are added manually when the Python core supports them.
 
         String defaultPassword = passwordEncoder.encode("stamina123");
         AppUser alice = userRepository.save(new AppUser("alice@stamina.local", "Alice Montenegro", defaultPassword));

@@ -54,3 +54,98 @@ export type CreateApiKeyRequest = {
 export type RevealedKeyResponse = {
   apiKey: string;
 };
+
+/* -------- Strategy Config types -------- */
+
+export type StopLossType = {
+  id: string;
+  code: string;
+  displayName: string;
+  description: string;
+};
+
+export type MLStrategy = {
+  id: string;
+  code: string;
+  displayName: string;
+  description: string;
+};
+
+export type StrategyConfig = {
+  id: string;
+  userId: string;
+  userDisplayName: string;
+  name: string;
+  symbol: string;
+  maxPositionSize: number;
+  enabled: boolean;
+
+  // Risk Management
+  maxDrawdown: number | null;
+  maxRiskPerTrade: number | null;
+  maxDailyLoss: number | null;
+  maxOpenPositions: number | null;
+
+  // Trade Parameters
+  stopLossTypeId: string | null;
+  stopLossTypeCode: string | null;
+  stopLossTypeDisplayName: string | null;
+  stopLoss: number | null;
+  takeProfit: number | null;
+  spreadThreshold: number | null;
+
+  // Time & Execution
+  tradingWindowStart: string | null;
+  tradingWindowEnd: string | null;
+  trailingStopActivation: number | null;
+  breakEvenTrigger: number | null;
+
+  // ML
+  useML: boolean;
+  mlStrategyId: string | null;
+  mlStrategyCode: string | null;
+  mlStrategyDisplayName: string | null;
+};
+
+export type CreateStrategyRequest = {
+  userId: string;
+  name: string;
+  symbol: string;
+  maxPositionSize: number;
+  enabled: boolean;
+  maxDrawdown?: number | null;
+  maxRiskPerTrade?: number | null;
+  maxDailyLoss?: number | null;
+  maxOpenPositions?: number | null;
+  stopLossTypeId?: string | null;
+  stopLoss?: number | null;
+  takeProfit?: number | null;
+  spreadThreshold?: number | null;
+  tradingWindowStart?: string | null;
+  tradingWindowEnd?: string | null;
+  trailingStopActivation?: number | null;
+  breakEvenTrigger?: number | null;
+  useML?: boolean;
+  mlStrategyId?: string | null;
+};
+
+export type UpdateStrategyRequest = {
+  name?: string;
+  symbol?: string;
+  maxPositionSize?: number;
+  enabled?: boolean;
+  maxDrawdown?: number | null;
+  maxRiskPerTrade?: number | null;
+  maxDailyLoss?: number | null;
+  maxOpenPositions?: number | null;
+  stopLossTypeId?: string | null;
+  stopLoss?: number | null;
+  takeProfit?: number | null;
+  spreadThreshold?: number | null;
+  tradingWindowStart?: string | null;
+  tradingWindowEnd?: string | null;
+  trailingStopActivation?: number | null;
+  breakEvenTrigger?: number | null;
+  useML?: boolean;
+  mlStrategyId?: string | null;
+};
