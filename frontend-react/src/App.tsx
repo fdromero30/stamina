@@ -22,15 +22,22 @@ export function App() {
   };
 
   useEffect(() => {
-    if (route === "dashboard" && !session) {
+    if ((route === "dashboard" || route === "strategies") && !session) {
       window.history.replaceState({}, "", pathFromRoute("login"));
       setRoute("login");
+    }
+    if (route === "strategies" && session) {
+      window.history.replaceState({}, "", pathFromRoute("strategies"));
     }
   }, [route, session]);
 
   const openDashboard = (user: Session) => {
     setSession(user);
     navigate("dashboard");
+  };
+
+  const openStrategies = () => {
+    navigate("strategies");
   };
 
   const openDashboardOrLogin = () => {
@@ -41,10 +48,11 @@ export function App() {
     navigate(mode === "login" ? "login" : "signup");
   };
 
-  if (route === "dashboard" && session) {
+  if ((route === "dashboard" || route === "strategies") && session) {
     return (
       <DashboardPage
         session={session}
+        initialView={route === "strategies" ? "strategies" : "dashboard"}
         onLogout={() => {
           setSession(null);
           navigate("landing");
@@ -53,7 +61,7 @@ export function App() {
     );
   }
 
-  if (route === "dashboard" && !session) {
+  if ((route === "dashboard" || route === "strategies") && !session) {
     return null;
   }
 

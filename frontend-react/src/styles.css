@@ -741,6 +741,161 @@ h3 {
   }
 }
 
+/* -------- Modal overlay -------- */
+
+.modal-overlay {
+  align-items: center;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  inset: 0;
+  justify-content: center;
+  padding: 24px;
+  position: fixed;
+  z-index: 100;
+}
+
+.modal-panel {
+  background: #ffffff;
+  border: 1px solid #dfe6e2;
+  border-radius: 10px;
+  box-shadow: 0 24px 56px rgba(17, 32, 29, 0.18);
+  display: flex;
+  flex-direction: column;
+  max-height: 90vh;
+  max-width: 720px;
+  overflow-y: auto;
+  padding: 24px;
+  width: 100%;
+}
+
+.modal-header {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 20px;
+}
+
+.modal-header h2 {
+  margin: 0;
+}
+
+/* -------- Strategy form -------- */
+
+.strategy-form {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.strategy-form fieldset {
+  border: 1px solid #e0e8e4;
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 18px;
+}
+
+.strategy-form legend {
+  color: #1f7a57;
+  font-weight: 750;
+  font-size: 14px;
+  padding: 0 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.strategy-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: 1;
+}
+
+.strategy-form label span {
+  color: #33423f;
+  font-size: 14px;
+  font-weight: 750;
+}
+
+.strategy-form input,
+.strategy-form select {
+  background: #f8faf9;
+  border: 1px solid #d7e1dd;
+  border-radius: 6px;
+  color: #17201f;
+  min-height: 42px;
+  padding: 8px 12px;
+  width: 100%;
+}
+
+.strategy-form select {
+  cursor: pointer;
+}
+
+.strategy-form input[type="checkbox"] {
+  min-height: auto;
+  width: auto;
+}
+
+.strategy-form .form-row {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: 1fr 1fr;
+}
+
+.strategy-form .checkbox-label {
+  align-items: center;
+  flex-direction: row;
+  gap: 10px;
+}
+
+.strategy-form .checkbox-label span {
+  margin-top: 2px;
+}
+
+.form-actions {
+  align-items: center;
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+}
+
+.field-hint {
+  color: #8a9e98;
+  font-size: 13px;
+  margin: 4px 0 0;
+}
+
+/* -------- Strategy table (full page) -------- */
+
+.strategy-table-full {
+  border-collapse: collapse;
+  font-size: 14px;
+  text-align: left;
+  width: 100%;
+}
+
+.strategy-table-full th {
+  border-bottom: 2px solid #dfe6e2;
+  color: #58706b;
+  font-weight: 750;
+  padding: 8px 12px;
+  text-transform: uppercase;
+  font-size: 12px;
+  letter-spacing: 0.5px;
+}
+
+.strategy-table-full td {
+  border-bottom: 1px solid #e8efeb;
+  padding: 10px 12px;
+  vertical-align: middle;
+}
+
+.strategy-table-full tbody tr:hover {
+  background: #f5f8f6;
+}
+
 @media (max-width: 580px) {
   .nav-actions,
   .hero-actions,
