@@ -1,0 +1,10 @@
+#!/bin/sh
+# ---------------------------------------------------------------------------
+# Maven Wrapper - skip since maven is not installed locally
+# Tests can be run via Docker: docker compose run --rm backend mvn test
+# ---------------------------------------------------------------------------
+echo "Maven is not installed locally."
+echo "To run backend tests, use one of:"
+echo "  brew install maven && mvn test"
+echo "  docker run --rm -v \$(pwd):/app -w /app maven:3.9-eclipse-temurin-21 mvn test"
+exit 1
