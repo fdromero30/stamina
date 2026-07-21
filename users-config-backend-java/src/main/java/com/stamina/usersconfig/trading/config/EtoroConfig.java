@@ -7,9 +7,7 @@ import org.springframework.context.annotation.Configuration;
 @ConfigurationProperties(prefix = "etoro")
 public class EtoroConfig {
 
-    private String apiBaseUrl = "https://api.example-etoro.local";
-    private String apiKey = "replace_me";
-    private String accountId = "replace_me";
+    private String apiBaseUrl = "https://public-api.etoro.com/api/v1";
 
     public String getApiBaseUrl() {
         return apiBaseUrl;
@@ -17,21 +15,5 @@ public class EtoroConfig {
 
     public void setApiBaseUrl(String apiBaseUrl) {
         this.apiBaseUrl = apiBaseUrl;
-    }
-
-    public String getApiKey() {
-        return apiKey;
-    }
-
-    public void setApiKey(String apiKey) {
-        this.apiKey = apiKey;
-    }
-
-    public String getAccountId() {
-        return accountId;
-    }
-
-    public void setAccountId(String accountId) {
-        this.accountId = accountId;
     }
 }
