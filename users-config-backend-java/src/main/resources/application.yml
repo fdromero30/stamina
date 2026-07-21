@@ -22,7 +22,5 @@ crypto:
   master-key: ${CRYPTO_MASTER_KEY:}
 
 etoro:
-  api-base-url: ${ETORO_API_BASE_URL:https://api.example-etoro.local}
-  api-key: ${ETORO_API_KEY:replace_me}
-  account-id: ${ETORO_ACCOUNT_ID:replace_me}
+  api-base-url: ${ETORO_API_BASE_URL:https://public-api.etoro.com/api/v1}
 

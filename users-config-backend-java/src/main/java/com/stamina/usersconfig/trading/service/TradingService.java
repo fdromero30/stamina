@@ -11,6 +11,7 @@ import org.springframework.web.server.ResponseStatusException;
 
 import java.math.BigDecimal;
 import java.util.List;
+import java.util.UUID;
 
 @Service
 public class TradingService {
@@ -24,6 +25,8 @@ public class TradingService {
     }
 
     public ExecuteOrderResponse execute(ExecuteOrderRequest request) {
+        UUID userId = UUID.fromString(request.userId());
+
         List<StrategyConfig> strategies = strategyRepository.findBySymbolAndEnabledTrue(request.symbol());
 
         if (strategies.isEmpty()) {
@@ -46,7 +49,7 @@ public class TradingService {
         }
 
         try {
-            etoroClient.placeOrder(request.symbol(), request.side(), request.units());
+            etoroClient.placeOrder(userId, request.symbol(), request.side(), request.units());
             return ExecuteOrderResponse.success("Order placed for " + request.units() + " units of " + request.symbol());
         } catch (Exception e) {
             throw new ResponseStatusException(
