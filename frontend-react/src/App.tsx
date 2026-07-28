@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { AuthPage } from "./pages/AuthPage";
 import { DashboardPage } from "./pages/DashboardPage";
+import { EtoroTestPage } from "./pages/EtoroTestPage";
 import { LandingPage } from "./pages/LandingPage";
 import { pathFromRoute, routeFromPath, type AppRoute } from "./routing/routes";
 import type { AuthMode, Session } from "./types";
@@ -22,7 +23,7 @@ export function App() {
   };
 
   useEffect(() => {
-    if ((route === "dashboard" || route === "strategies") && !session) {
+    if ((route === "dashboard" || route === "strategies" || route === "etoro-test") && !session) {
       window.history.replaceState({}, "", pathFromRoute("login"));
       setRoute("login");
     }
@@ -48,7 +49,21 @@ export function App() {
     navigate(mode === "login" ? "login" : "signup");
   };
 
-  if ((route === "dashboard" || route === "strategies") && session) {
+  if ((route === "dashboard" || route === "strategies" || route === "etoro-test") && session) {
+    if (route === "etoro-test") {
+      return (
+        <DashboardPage
+          session={session}
+          initialView="dashboard"
+          onLogout={() => {
+            setSession(null);
+            navigate("landing");
+          }}
+          overrideContent={<EtoroTestPage session={session} />}
+        />
+      );
+    }
+
     return (
       <DashboardPage
         session={session}
@@ -61,7 +76,7 @@ export function App() {
     );
   }
 
-  if ((route === "dashboard" || route === "strategies") && !session) {
+  if ((route === "dashboard" || route === "strategies" || route === "etoro-test") && !session) {
     return null;
   }
 

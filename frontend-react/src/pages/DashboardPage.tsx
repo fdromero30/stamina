@@ -3,46 +3,36 @@ import { Activity, Bot, CheckCircle2, Database, Key, LineChart, Loader2, Lock, S
 import { strategyRows, tradingCoreUrl, usersConfigUrl } from "../data/dashboard";
 import { useGetUsersQuery } from "../store/api";
 import type { Session } from "../types";
+import type { ReactNode } from "react";
 import { ApiKeysPage } from "./ApiKeysPage";
+import { EtoroTestPage } from "./EtoroTestPage";
 import { StrategiesPage } from "./StrategiesPage";
 
 type DashboardPageProps = {
   session: Session;
   initialView?: DashboardView;
   onLogout: () => void;
+  overrideContent?: ReactNode;
 };
 
-type DashboardView = "dashboard" | "apikeys" | "strategies";
+type DashboardView = "dashboard" | "apikeys" | "strategies" | "etoro-test";
 
-export function DashboardPage({ session, initialView = "dashboard", onLogout }: DashboardPageProps) {
+export function DashboardPage({ session, initialView = "dashboard", onLogout, overrideContent }: DashboardPageProps) {
   const [view, setView] = useState<DashboardView>(initialView);
   const { data: apiUsers, isLoading, isError } = useGetUsersQuery();
 
-  return (
-    <main className="shell">
-      <aside className="sidebar">
-        <div className="brand">
-          <Activity size={24} />
-          <span>Stamina</span>
-        </div>
-        <nav className="dashboard-nav" aria-label="Dashboard">
-          <button className={view === "dashboard" ? "active" : ""} onClick={() => setView("dashboard")}>Dashboard</button>
-          <button className={view === "strategies" ? "active" : ""} onClick={() => setView("strategies")}>Strategies</button>
-          <button>Users</button>
-          <button>Risk</button>
-          <button className={view === "apikeys" ? "active" : ""} onClick={() => setView("apikeys")}>
-            <Key size={16} />
-            <span>API Keys</span>
-          </button>
-        </nav>
-      </aside>
+  const renderWorkspace = () => {
+    if (overrideContent) return overrideContent;
 
-      <section className="workspace">
-        {view === "apikeys" ? (
-          <ApiKeysPage session={session} />
-        ) : view === "strategies" ? (
-          <StrategiesPage session={session} />
-        ) : (
+    switch (view) {
+      case "apikeys":
+        return <ApiKeysPage session={session} />;
+      case "strategies":
+        return <StrategiesPage session={session} />;
+      case "etoro-test":
+        return <EtoroTestPage session={session} />;
+      default:
+        return (
           <>
             <header className="topbar">
               <div>
@@ -134,7 +124,35 @@ export function DashboardPage({ session, initialView = "dashboard", onLogout }: 
               )}
             </section>
           </>
-        )}
+        );
+    }
+  };
+
+  return (
+    <main className="shell">
+      <aside className="sidebar">
+        <div className="brand">
+          <Activity size={24} />
+          <span>Stamina</span>
+        </div>
+        <nav className="dashboard-nav" aria-label="Dashboard">
+          <button className={view === "dashboard" ? "active" : ""} onClick={() => setView("dashboard")}>Dashboard</button>
+          <button className={view === "strategies" ? "active" : ""} onClick={() => setView("strategies")}>Strategies</button>
+          <button>Users</button>
+          <button>Risk</button>
+          <button className={view === "apikeys" ? "active" : ""} onClick={() => setView("apikeys")}>
+            <Key size={16} />
+            <span>API Keys</span>
+          </button>
+          <button className={view === "etoro-test" ? "active" : ""} onClick={() => setView("etoro-test")}>
+            <Activity size={16} />
+            <span>eToro Test</span>
+          </button>
+        </nav>
+      </aside>
+
+      <section className="workspace">
+        {renderWorkspace()}
       </section>
     </main>
   );

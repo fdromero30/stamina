@@ -867,6 +867,166 @@ h3 {
   margin: 4px 0 0;
 }
 
+/* -------- eToro Test Console -------- */
+
+.etoro-test-panel {
+  gap: 20px;
+}
+
+.etoro-test-subtitle {
+  color: #5f716d;
+  font-size: 14px;
+  margin: -8px 0 0;
+}
+
+.etoro-test-subtitle code {
+  background: #f0f4f2;
+  border-radius: 4px;
+  font-size: 12px;
+  padding: 2px 6px;
+}
+
+.etoro-test-grid {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
+  width: 100%;
+}
+
+.etoro-test-section {
+  background: #f8faf9;
+  border: 1px solid #e0e8e4;
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+}
+
+.etoro-test-section h3 {
+  align-items: center;
+  display: flex;
+  font-size: 15px;
+  gap: 8px;
+  margin: 0;
+}
+
+.etoro-test-card {
+  background: #ffffff;
+  border: 1px solid #e5ede9;
+  border-radius: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+}
+
+.etoro-test-card label {
+  color: #33423f;
+  font-size: 13px;
+  font-weight: 750;
+}
+
+.etoro-test-row {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+}
+
+.etoro-test-row input,
+.etoro-test-row select {
+  background: #f8faf9;
+  border: 1px solid #d7e1dd;
+  border-radius: 6px;
+  color: #17201f;
+  font-size: 14px;
+  min-height: 36px;
+  padding: 6px 10px;
+  width: 100%;
+}
+
+.etoro-test-row .small {
+  min-height: 36px;
+  padding: 6px 12px;
+  font-size: 13px;
+}
+
+.etoro-test-log {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+}
+
+.etoro-test-log h3 {
+  font-size: 15px;
+  margin: 0;
+}
+
+.etoro-log-entry {
+  background: #f8faf9;
+  border: 1px solid #e0e8e4;
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.etoro-log-header {
+  align-items: center;
+  background: #f0f4f2;
+  border-bottom: 1px solid #e0e8e4;
+  display: flex;
+  font-size: 13px;
+  gap: 8px;
+  padding: 8px 12px;
+}
+
+.etoro-log-status {
+  align-items: center;
+  display: flex;
+  height: 16px;
+  justify-content: center;
+  width: 16px;
+}
+
+.etoro-log-time {
+  color: #8a9e98;
+  font-size: 11px;
+  margin-left: auto;
+}
+
+.etoro-log-data {
+  color: #1a3a30;
+  font-family: "SF Mono", "Fira Code", "Fira Mono", Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  margin: 0;
+  max-height: 300px;
+  overflow: auto;
+  padding: 12px;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.etoro-log-error {
+  color: #a14535;
+  font-family: "SF Mono", "Fira Code", "Fira Mono", Menlo, Consolas, monospace;
+  font-size: 12px;
+  margin: 0;
+  padding: 12px;
+}
+
+.etoro-log-success {
+  border-left: 3px solid #1f7a57;
+}
+
+.etoro-log-error {
+  border-left: 3px solid #a14535;
+}
+
+.etoro-log-loading {
+  border-left: 3px solid #8a9e98;
+}
+
 /* -------- Strategy table (full page) -------- */
 
 .strategy-table-full {
