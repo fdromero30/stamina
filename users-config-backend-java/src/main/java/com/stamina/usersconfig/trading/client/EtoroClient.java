@@ -7,6 +7,7 @@ import com.stamina.usersconfig.trading.config.EtoroConfig;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 
+import java.math.BigDecimal;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -315,6 +316,55 @@ public class EtoroClient {
         return (Map<String, Object>) applyHeaders(
                 restClient.get()
                         .uri("/user-info/people?usernames={usernames}", usernames),
+                userId)
+                .retrieve()
+                .body(Map.class);
+    }
+
+    // ──────────────────────────────────────────────
+    //  Stop Loss / Take Profit Management
+    // ──────────────────────────────────────────────
+
+    @SuppressWarnings("unchecked")
+    public Map<String, Object> setStopLoss(UUID userId, int positionId, BigDecimal stopLossRate) {
+        Map<String, Object> body = Map.of(
+                "PositionID", positionId,
+                "StopLossRate", stopLossRate
+        );
+        return (Map<String, Object>) applyHeaders(
+                restClient.post()
+                        .uri("/trading/execution/stop-loss-orders")
+                        .body(body),
+                userId)
+                .retrieve()
+                .body(Map.class);
+    }
+
+    @SuppressWarnings("unchecked")
+    public Map<String, Object> setTakeProfit(UUID userId, int positionId, BigDecimal takeProfitRate) {
+        Map<String, Object> body = Map.of(
+                "PositionID", positionId,
+                "TakeProfitRate", takeProfitRate
+        );
+        return (Map<String, Object>) applyHeaders(
+                restClient.post()
+                        .uri("/trading/execution/take-profit-orders")
+                        .body(body),
+                userId)
+                .retrieve()
+                .body(Map.class);
+    }
+
+    @SuppressWarnings("unchecked")
+    public Map<String, Object> updateStopLoss(UUID userId, int positionId, BigDecimal newStopLossRate) {
+        Map<String, Object> body = Map.of(
+                "PositionID", positionId,
+                "StopLossRate", newStopLossRate
+        );
+        return (Map<String, Object>) applyHeaders(
+                restClient.put()
+                        .uri("/trading/execution/stop-loss-orders/{positionId}", positionId)
+                        .body(body),
                 userId)
                 .retrieve()
                 .body(Map.class);

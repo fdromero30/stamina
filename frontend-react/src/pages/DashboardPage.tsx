@@ -6,6 +6,7 @@ import type { Session } from "../types";
 import type { ReactNode } from "react";
 import { ApiKeysPage } from "./ApiKeysPage";
 import { EtoroTestPage } from "./EtoroTestPage";
+import { BotStatusPage } from "./BotStatusPage";
 import { StrategiesPage } from "./StrategiesPage";
 
 type DashboardPageProps = {
@@ -15,7 +16,7 @@ type DashboardPageProps = {
   overrideContent?: ReactNode;
 };
 
-type DashboardView = "dashboard" | "apikeys" | "strategies" | "etoro-test";
+type DashboardView = "dashboard" | "apikeys" | "strategies" | "etoro-test" | "bot-status";
 
 export function DashboardPage({ session, initialView = "dashboard", onLogout, overrideContent }: DashboardPageProps) {
   const [view, setView] = useState<DashboardView>(initialView);
@@ -31,6 +32,8 @@ export function DashboardPage({ session, initialView = "dashboard", onLogout, ov
         return <StrategiesPage session={session} />;
       case "etoro-test":
         return <EtoroTestPage session={session} />;
+      case "bot-status":
+        return <BotStatusPage session={session} />;
       default:
         return (
           <>
@@ -147,6 +150,10 @@ export function DashboardPage({ session, initialView = "dashboard", onLogout, ov
           <button className={view === "etoro-test" ? "active" : ""} onClick={() => setView("etoro-test")}>
             <Activity size={16} />
             <span>eToro Test</span>
+          </button>
+          <button className={view === "bot-status" ? "active" : ""} onClick={() => setView("bot-status")}>
+            <Bot size={16} />
+            <span>Bot Status</span>
           </button>
         </nav>
       </aside>
