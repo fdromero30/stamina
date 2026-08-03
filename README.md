@@ -1,40 +1,322 @@
 # Stamina Trading App
 
-Arquitectura inicial para una app web de trading separada en tres servicios:
+Aplicación web de trading automatizado compuesta por tres servicios independientes:
 
-- `frontend-react`: interfaz web en React.
-- `trading-core-python`: core business del bot de trading en Python.
-- `users-config-backend-java`: backend Java para usuarios y configuraciones.
-- `postgres`: base de datos para usuarios, configuraciones y estrategias.
+- **`frontend-react`**: interfaz web en React + TypeScript (Vite).
+- **`trading-core-python`**: core del bot de trading en Python (FastAPI).
+- **`users-config-backend-java`**: backend Java (Spring Boot) para usuarios, API keys, estrategias y operaciones de trading.
+- **`postgres`**: base de datos PostgreSQL para usuarios, configuraciones y estrategias.
 
-## Servicios
+---
 
-```text
-stamina/
-  frontend-react/
-  trading-core-python/
-  users-config-backend-java/
-  docker-compose.yml
-  .env.example
+## Requisitos previos
+
+| Herramienta | Versión mínima |
+|---|---|
+| [Docker](https://docs.docker.com/get-docker/) | 24+ |
+| [Docker Compose](https://docs.docker.com/compose/install/) | v2+ |
+
+> **Opcional** (solo para desarrollo local sin Docker):
+> - Node.js 22+
+> - Python 3.12+
+> - Java 21+ (JDK)
+> - Maven 3.9+
+
+---
+
+## 🚀 Levantar el proyecto (Docker)
+
+La forma más rápida de levantar toda la aplicación es con Docker Compose.
+
+### 1. Clonar el repositorio
+
+```bash
+git clone <url-del-repositorio>
+cd stamina
 ```
 
-## Levantar en Docker
+> ⚠️ **Importante:** El proyecto completo (incluido `docker-compose.yml`) está dentro de la carpeta `stamina/`. Si ya estás dentro de un directorio llamado `stamina` pero no ves el archivo `docker-compose.yml`, entra a la subcarpeta:
+>
+> ```bash
+> cd stamina
+> ```
+>
+> Verifica que estás en el lugar correcto:
+>
+> ```bash
+> ls docker-compose.yml
+> ```
+>
+> Si el comando muestra el archivo, estás en el directorio correcto.
+
+### 2. Configurar variables de entorno
 
 ```bash
 cp .env.example .env
+```
+
+El archivo `.env` ya trae valores de desarrollo funcionales. Solo necesitas editarlo si quieres cambiar puertos, credenciales de la base de datos o configurar eToro.
+
+### 3. Levantar los servicios
+
+```bash
 docker compose up --build
 ```
 
-URLs locales:
+Este comando construye las imágenes y levanta los 4 servicios. La primera vez puede tardar varios minutos (descarga de imágenes base y compilación de dependencias).
 
-- Frontend: http://localhost:5173
-- Trading core API: http://localhost:8000
-- Users/config backend: http://localhost:8080
-- Postgres: localhost:5432
+Para levantar en segundo plano:
 
-## Nota sobre eToro
+```bash
+docker compose up --build -d
+```
 
-La integracion con eToro queda aislada en `trading-core-python/app/integrations/etoro_client.py`.
-Antes de operar dinero real, confirma que tienes acceso a una API oficial/permitida por eToro para tu region, cuenta y caso de uso.
-No uses scraping ni automatizacion no autorizada para trading real.
+### 4. Verificar que todo está corriendo
 
+```bash
+docker compose ps
+```
+
+Todos los servicios deben aparecer con estado `Up` (o `healthy` en el caso de Postgres).
+
+### 5. Acceder a la aplicación
+
+| Servicio | URL |
+|---|---|
+| Frontend (React) | http://localhost:5173 |
+| Trading Core API (FastAPI) | http://localhost:8000 |
+| Trading Core docs (Swagger) | http://localhost:8000/docs |
+| Users/Config Backend (Spring Boot) | http://localhost:8080 |
+| Postgres | `localhost:5432` |
+
+### 6. Detener los servicios
+
+```bash
+docker compose down
+```
+
+Para detener y **eliminar los datos de la base de datos**:
+
+```bash
+docker compose down -v
+```
+
+---
+
+## ⚙️ Variables de entorno
+
+Todas las variables están documentadas en [`.env.example`](.env.example):
+
+| Variable | Descripción | Default |
+|---|---|---|
+| `POSTGRES_DB` | Nombre de la base de datos | `stamina` |
+| `POSTGRES_USER` | Usuario de la base de datos | `stamina` |
+| `POSTGRES_PASSWORD` | Contraseña de la base de datos | `stamina_dev_password` |
+| `JAVA_BACKEND_PORT` | Puerto del backend Java | `8080` |
+| `TRADING_CORE_PORT` | Puerto del trading core | `8000` |
+| `FRONTEND_PORT` | Puerto del frontend | `5173` |
+| `ETORO_API_BASE_URL` | URL base de la API de eToro | `https://public-api.etoro.com/api/v1` |
+| `ETORO_API_KEY` | API key de eToro | `replace_me` |
+| `ETORO_ACCOUNT_ID` | ID de cuenta eToro | `replace_me` |
+| `CRYPTO_MASTER_KEY` | Clave AES-256 para cifrar API keys (**requerida**) | `a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6` |
+| `VITE_USERS_CONFIG_API_URL` | URL del backend Java (solo dev local) | `http://localhost:8080` |
+| `VITE_TRADING_CORE_URL` | URL del trading core (solo dev local) | `http://localhost:8000` |
+
+> ⚠️ **`CRYPTO_MASTER_KEY` es obligatoria.** Debe tener exactamente 32 caracteres (AES-256). El valor incluido en `.env.example` es solo para desarrollo. En producción, genera una clave segura:
+>
+> ```bash
+> openssl rand -hex 16
+> ```
+
+---
+
+## 🛠️ Desarrollo local (sin Docker)
+
+Si quieres trabajar en un servicio específico con hot-reload, puedes levantarlo individualmente.
+
+### Frontend (React + Vite)
+
+```bash
+cd frontend-react
+npm install
+npm run dev
+```
+
+El servidor de desarrollo corre en `http://localhost:5174` y hace proxy de `/api` → `http://localhost:8080` y `/trading-core` → `http://localhost:8000`.
+
+### Trading Core (Python + FastAPI)
+
+```bash
+cd trading-core-python
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+uvicorn app.main:app --reload --port 8000
+```
+
+### Users/Config Backend (Java + Spring Boot)
+
+```bash
+cd users-config-backend-java
+./mvnw spring-boot:run
+```
+
+> **Nota:** Para desarrollo local necesitas una instancia de Postgres corriendo. Puedes levantarla solo con Docker:
+>
+> ```bash
+> docker compose up postgres -d
+> ```
+
+---
+
+## 🧪 Tests
+
+### Frontend
+
+```bash
+cd frontend-react
+npm test
+```
+
+### Trading Core
+
+```bash
+cd trading-core-python
+pytest
+```
+
+### Users/Config Backend
+
+```bash
+cd users-config-backend-java
+./mvnw test
+```
+
+---
+
+## 📁 Estructura del proyecto
+
+```text
+stamina/
+├── docker-compose.yml              # Orquestación de todos los servicios
+├── .env.example                    # Plantilla de variables de entorno
+├── frontend-react/                 # Frontend React + TypeScript (Vite)
+│   ├── Dockerfile
+│   ├── nginx.conf                  # Configuración de Nginx (proxy inverso)
+│   ├── package.json
+│   └── src/
+│       ├── components/             # Componentes reutilizables
+│       ├── pages/                  # Páginas de la aplicación
+│       ├── routing/                # Definición de rutas
+│       ├── store/                  # Redux Toolkit (API slices)
+│       └── test/                   # Tests unitarios
+├── trading-core-python/            # Bot de trading (FastAPI)
+│   ├── Dockerfile
+│   ├── requirements.txt
+│   ├── app/
+│   │   ├── main.py                 # Endpoints de la API
+│   │   ├── settings.py             # Configuración del bot
+│   │   ├── bot/                    # Motor del bot y scheduler
+│   │   └── integrations/           # Clientes de market data, órdenes y estrategias
+│   └── tests/
+└── users-config-backend-java/      # Backend de usuarios y config (Spring Boot)
+    ├── Dockerfile
+    ├── pom.xml
+    └── src/main/java/com/stamina/usersconfig/
+        ├── apikey/                 # Gestión de API keys (cifradas)
+        ├── strategy/               # Configuración de estrategias
+        ├── trading/                # Cliente eToro y operaciones
+        ├── user/                   # Usuarios y autenticación
+        └── config/                 # Seguridad, CORS, crypto, seeder
+```
+
+---
+
+## 🔌 Endpoints principales
+
+### Trading Core (`http://localhost:8000`)
+
+| Método | Ruta | Descripción |
+|---|---|---|
+| `GET` | `/health` | Estado del servicio |
+| `POST` | `/bot/start` | Inicia el scheduler del bot |
+| `POST` | `/bot/stop` | Detiene el scheduler del bot |
+| `GET` | `/bot/status` | Estado actual del bot |
+| `POST` | `/bot/cycle` | Ejecuta un ciclo de trading manualmente |
+| `POST` | `/bot/evaluate/{strategy_id}` | Evalúa una estrategia sin ejecutar trades |
+| `POST` | `/orders/market` | Envía una orden de mercado |
+
+Documentación interactiva (Swagger): http://localhost:8000/docs
+
+### Users/Config Backend (`http://localhost:8080`)
+
+| Método | Ruta | Descripción |
+|---|---|---|
+| `GET` | `/health` | Estado del servicio |
+| `POST` | `/users` | Crear usuario |
+| `POST` | `/users/login` | Iniciar sesión |
+| `GET` | `/users` | Listar usuarios |
+| `GET` | `/api-keys?userId={id}` | Listar API keys de un usuario |
+| `POST` | `/api-keys` | Crear API key (se cifra con `CRYPTO_MASTER_KEY`) |
+| `GET` | `/strategies?userId={id}` | Listar estrategias de un usuario |
+| `POST` | `/strategies` | Crear estrategia |
+| `PUT` | `/strategies/{id}` | Actualizar estrategia |
+| `DELETE` | `/strategies/{id}` | Eliminar estrategia |
+
+---
+
+## 🐳 Comandos útiles de Docker
+
+```bash
+# Ver logs de un servicio específico
+docker compose logs -f frontend
+
+# Reconstruir un solo servicio
+docker compose up --build trading-core
+
+# Ver el estado de los contenedores
+docker compose ps
+
+# Ejecutar un comando dentro de un contenedor
+docker compose exec postgres psql -U stamina -d stamina
+
+# Detener todo y limpiar volúmenes (borra la BD)
+docker compose down -v
+```
+
+---
+
+## ⚠️ Nota sobre eToro
+
+La integración con eToro queda aislada en `trading-core-python/app/integrations/` y en el cliente `EtoroClient` del backend Java.
+
+Antes de operar con dinero real, confirma que tienes acceso a una API oficial/permitida por eToro para tu región, cuenta y caso de uso. **No uses scraping ni automatización no autorizada para trading real.**
+
+---
+
+## 🧰 Troubleshooting
+
+### El puerto 5432 ya está en uso
+
+Cambia el puerto de Postgres en tu `.env`:
+
+```env
+POSTGRES_PORT=5433
+```
+
+> Nota: `POSTGRES_PORT` no está definido por defecto en `docker-compose.yml`. Si necesitas cambiar el puerto de Postgres, edita la línea `"5432:5432"` en `docker-compose.yml` o agrega la variable al archivo compose.
+
+### `CRYPTO_MASTER_KEY` no configurada
+
+El backend Java fallará al arrancar si `CRYPTO_MASTER_KEY` está vacía. Asegúrate de que tu `.env` la incluya (el `.env.example` ya trae una de desarrollo).
+
+### La primera compilación tarda mucho
+
+Es normal: Docker descarga imágenes base (Node, Python, Maven, JRE) y compila las dependencias. Las siguientes ejecuciones usan caché y son mucho más rápidas.
+
+### Quiero resetear todo
+
+```bash
+docker compose down -v
+docker compose up --build
+```

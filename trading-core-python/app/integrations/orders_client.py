@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Optional
 
 import httpx
 
@@ -144,7 +144,7 @@ class EtoroHttpClient:
             return resp.json()
 
     async def demo_close_position(
-        self, user_id: str, position_id: int, units_to_deduct: float | None = None
+        self, user_id: str, position_id: int, units_to_deduct: Optional[float] = None
     ) -> dict[str, Any]:
         params: dict[str, Any] = {"userId": user_id}
         if units_to_deduct is not None:
@@ -204,7 +204,7 @@ class EtoroHttpClient:
             return resp.json()
 
     async def close_position(
-        self, user_id: str, position_id: int, units_to_deduct: float | None = None
+        self, user_id: str, position_id: int, units_to_deduct: Optional[float] = None
     ) -> dict[str, Any]:
         params: dict[str, Any] = {"userId": user_id}
         if units_to_deduct is not None:

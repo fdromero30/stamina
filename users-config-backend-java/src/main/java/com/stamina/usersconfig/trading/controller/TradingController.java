@@ -2,6 +2,8 @@ package com.stamina.usersconfig.trading.controller;
 
 import com.stamina.usersconfig.trading.dto.ExecuteOrderRequest;
 import com.stamina.usersconfig.trading.dto.ExecuteOrderResponse;
+import com.stamina.usersconfig.trading.dto.ExecuteTradeRequest;
+import com.stamina.usersconfig.trading.dto.ExecuteTradeResponse;
 import com.stamina.usersconfig.trading.service.TradingService;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
@@ -25,5 +27,11 @@ public class TradingController {
     @ResponseStatus(HttpStatus.OK)
     public ExecuteOrderResponse execute(@Valid @RequestBody ExecuteOrderRequest request) {
         return tradingService.execute(request);
+    }
+
+    @PostMapping("/execute-smart")
+    @ResponseStatus(HttpStatus.OK)
+    public ExecuteTradeResponse executeSmart(@Valid @RequestBody ExecuteTradeRequest request) {
+        return tradingService.executeSmart(request);
     }
 }
