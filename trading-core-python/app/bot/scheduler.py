@@ -2,10 +2,15 @@
 
 import asyncio
 import logging
+import time
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Any, Awaitable, Callable, Optional
+
+from app.bot import persistence
 
 logger = logging.getLogger(__name__)
+
+TickHandler = Callable[[], Awaitable[dict]]
 
 
 class TradingScheduler:
@@ -13,16 +18,35 @@ class TradingScheduler:
     A simple async scheduler that runs the trading engine at a fixed interval.
 
     Can be started, stopped, and queried for status.
+    Keeps an in-memory history of recent cycles for observability.
     """
 
-    def __init__(self, interval_seconds: int) -> None:
+    def __init__(self, interval_seconds: int, history_limit: int = 20) -> None:
         self._interval = interval_seconds
+        self._history_limit = history_limit
         self._task: Optional[asyncio.Task[None]] = None
         self._running = False
         self._cycle_count = 0
         self._last_run: Optional[datetime] = None
         self._next_run: Optional[datetime] = None
-        self._on_tick = None
+        self._on_tick: Optional[TickHandler] = None
+        self._cycle_history: list[dict[str, Any]] = []
+
+        # Restore persisted state
+        self._cycle_history = persistence.load_cycle_history(limit=history_limit)
+        self._cycle_count = persistence.load_bot_state("cycle_count", 0)
+        last_run = persistence.load_bot_state("last_run")
+        if last_run:
+            try:
+                self._last_run = datetime.fromisoformat(last_run)
+            except ValueError:
+                self._last_run = None
+        next_run = persistence.load_bot_state("next_run")
+        if next_run:
+            try:
+                self._next_run = datetime.fromisoformat(next_run)
+            except ValueError:
+                self._next_run = None
 
     @property
     def is_running(self) -> bool:
@@ -44,7 +68,12 @@ class TradingScheduler:
     def interval_seconds(self) -> int:
         return self._interval
 
-    def set_tick_handler(self, handler) -> None:
+    @property
+    def cycle_history(self) -> list[dict[str, Any]]:
+        """Return the recent cycle history (most recent first)."""
+        return self._cycle_history
+
+    def set_tick_handler(self, handler: TickHandler) -> None:
         """Set the async callable that will be invoked on each tick."""
         self._on_tick = handler
 
@@ -77,9 +106,10 @@ class TradingScheduler:
         """Manually trigger a single trading cycle (for testing)."""
         if self._on_tick is None:
             raise RuntimeError("No tick handler set")
-        result = await self._on_tick()
+        result = await self._run_single_cycle(source="manual")
         self._cycle_count += 1
         self._last_run = datetime.now(timezone.utc)
+        self._persist_state()
         return result
 
     async def _run_loop(self) -> None:
@@ -91,9 +121,10 @@ class TradingScheduler:
             )
 
             try:
-                await self._on_tick()
+                await self._run_single_cycle(source="auto")
                 self._cycle_count += 1
                 self._last_run = datetime.now(timezone.utc)
+                self._persist_state()
             except asyncio.CancelledError:
                 raise
             except Exception:
@@ -101,6 +132,59 @@ class TradingScheduler:
 
             # Wait for the next interval (or until stopped)
             await self._sleep_until_next()
+
+    async def _run_single_cycle(self, source: str) -> dict:
+        """Execute one trading cycle and record it in the history."""
+        started = time.monotonic()
+
+        if self._on_tick is None:
+            raise RuntimeError("No tick handler set")
+
+        try:
+            result = await self._on_tick()
+            status = "success"
+            error = None
+        except Exception as e:
+            logger.exception("Trading cycle failed")
+            result = {
+                "evaluations": [],
+                "trades": [],
+                "adjustments": [],
+                "error": str(e),
+            }
+            status = "error"
+            error = str(e)
+
+        duration_ms = round((time.monotonic() - started) * 1000, 2)
+
+        entry: dict[str, Any] = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "source": source,
+            "duration_ms": duration_ms,
+            "status": status,
+            "evaluations": result.get("evaluations", []),
+            "trades": result.get("trades", []),
+            "adjustments": result.get("adjustments", []),
+            "skipped": result.get("skipped", False),
+            "error": error,
+            "reason": result.get("reason"),
+        }
+
+        self._cycle_history.insert(0, entry)
+        del self._cycle_history[self._history_limit:]
+
+        # Persist the cycle entry to database
+        persistence.save_cycle(entry)
+
+        return result
+
+    def _persist_state(self) -> None:
+        """Persist scheduler state (cycle count, last/next run) to database."""
+        persistence.save_bot_state("cycle_count", self._cycle_count)
+        if self._last_run:
+            persistence.save_bot_state("last_run", self._last_run.isoformat())
+        if self._next_run:
+            persistence.save_bot_state("next_run", self._next_run.isoformat())
 
     async def _sleep_until_next(self) -> None:
         """Sleep for the interval, checking periodically if stopped."""

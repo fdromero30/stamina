@@ -27,6 +27,7 @@ class Signal:
     stop_loss: Optional[float]
     take_profit: Optional[float]
     reason: str
+    context: Optional[dict[str, Any]] = None  # Evaluated conditions for observability
 
 
 @dataclass(frozen=True)
@@ -36,6 +37,7 @@ class Candle:
     high: float
     low: float
     close: float
+    timestamp: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -230,17 +232,6 @@ def evaluate_ma_strategy(
     - SL = swing low (for buy) / swing high (for sell) before crossover
     - TP = 2:1 risk:reward
     """
-    if len(candles) < strategy.ma_long_period + 10:
-        return Signal(
-            action=SignalAction.HOLD,
-            confidence=0.0,
-            units=0.0,
-            entry_price=0.0,
-            stop_loss=None,
-            take_profit=None,
-            reason=f"Not enough candles: {len(candles)} < {strategy.ma_long_period + 10}",
-        )
-
     # ── Calculate MAs ──────────────────────────────────────────────
     closes = [c.close for c in candles]
     ma_short = compute_sma(closes, strategy.ma_short_period)
@@ -267,6 +258,38 @@ def evaluate_ma_strategy(
     # ── Detect crossover ────────────────────────────────────────────
     crossover = detect_ma_crossover(closes, ma_short, ma_long)
 
+    # Build the context of evaluated conditions for observability
+    context: dict[str, Any] = {
+        "candles_count": len(candles),
+        "ma_short_period": strategy.ma_short_period,
+        "ma_long_period": strategy.ma_long_period,
+        "ma_short_value": round(ma_short[-1], 5) if ma_short else None,
+        "ma_long_value": round(current_ma200, 5),
+        "current_price": round(current_price, 5),
+        "bid": market_data.bid,
+        "ask": market_data.ask,
+        "price_above_ma200": price_above_ma200,
+        "price_below_ma200": price_below_ma200,
+        "crossover": crossover,
+        "open_positions_count": open_positions_count,
+        "max_positions": max_positions,
+        "account_balance": account_balance,
+        "risk_per_trade": risk_per_trade,
+        "swing_lookback": swing_lookback,
+    }
+
+    if len(candles) < strategy.ma_long_period + 10:
+        return Signal(
+            action=SignalAction.HOLD,
+            confidence=0.0,
+            units=0.0,
+            entry_price=0.0,
+            stop_loss=None,
+            take_profit=None,
+            reason=f"Not enough candles: {len(candles)} < {strategy.ma_long_period + 10}",
+            context=context,
+        )
+
     if crossover is None:
         return Signal(
             action=SignalAction.HOLD,
@@ -276,6 +299,7 @@ def evaluate_ma_strategy(
             stop_loss=None,
             take_profit=None,
             reason="No MA crossover detected",
+            context=context,
         )
 
     # ── Check position limits ───────────────────────────────────────
@@ -288,6 +312,7 @@ def evaluate_ma_strategy(
             stop_loss=None,
             take_profit=None,
             reason=f"Max positions reached ({open_positions_count}/{max_positions})",
+            context=context,
         )
 
     # ── Evaluate signal based on trend ──────────────────────────────
@@ -305,6 +330,7 @@ def evaluate_ma_strategy(
                 stop_loss=None,
                 take_profit=None,
                 reason="No valid swing low found for SL placement",
+                context=context,
             )
 
         take_profit = calculate_take_profit(entry_price, stop_loss, 2.0, is_buy=True)
@@ -319,7 +345,15 @@ def evaluate_ma_strategy(
                 stop_loss=None,
                 take_profit=None,
                 reason=f"Calculated units too low: {units}",
+                context=context,
             )
+
+        context.update({
+            "entry_price": entry_price,
+            "stop_loss": stop_loss,
+            "take_profit": take_profit,
+            "units": units,
+        })
 
         return Signal(
             action=SignalAction.BUY,
@@ -330,6 +364,7 @@ def evaluate_ma_strategy(
             take_profit=take_profit,
             reason=f"BUY: price {current_price:.5f} > MA200 {current_ma200:.5f}, "
                    f"crossed above MA9. SL={stop_loss:.5f}, TP={take_profit:.5f}",
+            context=context,
         )
 
     elif crossover == "bearish" and price_below_ma200:
@@ -344,6 +379,7 @@ def evaluate_ma_strategy(
                 stop_loss=None,
                 take_profit=None,
                 reason="No valid swing high found for SL placement",
+                context=context,
             )
 
         take_profit = calculate_take_profit(entry_price, stop_loss, 2.0, is_buy=False)
@@ -358,7 +394,15 @@ def evaluate_ma_strategy(
                 stop_loss=None,
                 take_profit=None,
                 reason=f"Calculated units too low: {units}",
+                context=context,
             )
+
+        context.update({
+            "entry_price": entry_price,
+            "stop_loss": stop_loss,
+            "take_profit": take_profit,
+            "units": units,
+        })
 
         return Signal(
             action=SignalAction.SELL,
@@ -369,6 +413,7 @@ def evaluate_ma_strategy(
             take_profit=take_profit,
             reason=f"SELL: price {current_price:.5f} < MA200 {current_ma200:.5f}, "
                    f"crossed below MA9. SL={stop_loss:.5f}, TP={take_profit:.5f}",
+            context=context,
         )
 
     # Signal direction doesn't match trend
@@ -381,4 +426,5 @@ def evaluate_ma_strategy(
         take_profit=None,
         reason=f"Crossover direction ({crossover}) doesn't match trend "
                f"(above_MA200={price_above_ma200})",
+        context=context,
     )

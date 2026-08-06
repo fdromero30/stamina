@@ -242,6 +242,7 @@ stamina/
 | `POST` | `/bot/start` | Inicia el scheduler del bot |
 | `POST` | `/bot/stop` | Detiene el scheduler del bot |
 | `GET` | `/bot/status` | Estado actual del bot |
+| `GET` | `/bot/cycles` | Historial de ciclos recientes y posiciones abiertas (persistido en SQLite) |
 | `POST` | `/bot/cycle` | Ejecuta un ciclo de trading manualmente |
 | `POST` | `/bot/evaluate/{strategy_id}` | Evalúa una estrategia sin ejecutar trades |
 | `POST` | `/orders/market` | Envía una orden de mercado |
@@ -293,6 +294,22 @@ La integración con eToro queda aislada en `trading-core-python/app/integrations
 Antes de operar con dinero real, confirma que tienes acceso a una API oficial/permitida por eToro para tu región, cuenta y caso de uso. **No uses scraping ni automatización no autorizada para trading real.**
 
 ---
+
+## 💾 Persistencia del estado del bot
+
+El trading core guarda el estado del bot en una base de datos SQLite local (`trading-core-python/data/bot_state.db`), de modo que el historial de ciclos, las posiciones abiertas y el contador de ciclos sobreviven a reinicios del servicio.
+
+- **Archivo**: `trading-core-python/data/bot_state.db`
+- **Volumen Docker**: `stamina_trading_data` (mapeado a `/app/data`)
+- **Excluido de git**: los archivos `*.db` y el directorio `data/` están en `.gitignore`
+
+### Datos persistidos
+
+| Tabla | Contenido |
+|---|---|
+| `bot_state` | Estado general del bot (corriendo/detenido, conteo de ciclos, last/next run) |
+| `cycle_history` | Historial de ciclos recientes con evaluations, trades y adjustments |
+| `open_positions` | Posiciones abiertas con entry, stop loss, take profit y estado de breakeven |
 
 ## 🧰 Troubleshooting
 

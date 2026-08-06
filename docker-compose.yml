@@ -40,6 +40,8 @@ services:
       USERS_CONFIG_API_URL: http://users-config-backend:8080
     ports:
       - "${TRADING_CORE_PORT:-8000}:8000"
+    volumes:
+      - stamina_trading_data:/app/data
     depends_on:
       - users-config-backend
 
@@ -54,4 +56,5 @@ services:
 
 volumes:
   stamina_postgres_data:
+  stamina_trading_data:
 

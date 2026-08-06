@@ -22,6 +22,84 @@ export type CycleResult = {
   };
 };
 
+export type SignalContext = {
+  candles_count: number;
+  ma_short_period: number;
+  ma_long_period: number;
+  ma_short_value: number | null;
+  ma_long_value: number | null;
+  current_price: number | null;
+  bid: number | null;
+  ask: number | null;
+  price_above_ma200: boolean | null;
+  price_below_ma200: boolean | null;
+  crossover: "bullish" | "bearish" | null;
+  open_positions_count: number;
+  max_positions: number;
+  account_balance: number;
+  risk_per_trade: number;
+  swing_lookback: number;
+  entry_price?: number;
+  stop_loss?: number;
+  take_profit?: number;
+  units?: number;
+};
+
+export type CycleHistoryEntry = {
+  timestamp: string;
+  source: "auto" | "manual";
+  duration_ms: number;
+  status: "success" | "error";
+  evaluations: any[];
+  trades: any[];
+  adjustments: any[];
+  skipped: boolean;
+  error?: string | null;
+  reason?: string | null;
+};
+
+export type OpenPosition = {
+  position_id: number;
+  entry_price: number;
+  stop_loss: number | null;
+  take_profit: number | null;
+  is_buy: boolean;
+  breakeven_applied: boolean;
+  opened_at: string;
+};
+
+export type BotCyclesResponse = {
+  cycles: CycleHistoryEntry[];
+  open_positions: Record<string, OpenPosition[]>;
+};
+
+export type CandlePoint = {
+  time: string;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+};
+
+export type LinePoint = {
+  time: string;
+  value: number;
+};
+
+export type ChartData = {
+  symbol: string;
+  instrument_id: number;
+  interval: string;
+  candles: CandlePoint[];
+  ma9: LinePoint[];
+  ma200: LinePoint[];
+  last_price: {
+    bid: number | null;
+    ask: number | null;
+  };
+  timestamp: string;
+};
+
 export const botApi = createApi({
   reducerPath: "botApi",
   baseQuery: fetchBaseQuery({ baseUrl: tradingCoreUrl }),
@@ -66,6 +144,15 @@ export const botApi = createApi({
     getHealth: builder.query<{ service: string; status: string; version: string }, void>({
       query: () => "/health",
     }),
+
+    getBotCycles: builder.query<BotCyclesResponse, void>({
+      query: () => "/bot/cycles",
+    }),
+
+    getChartData: builder.query<ChartData, { userId: string; interval?: string; count?: number }>({
+      query: ({ userId, interval = "5m", count = 300 }) =>
+        `/chart/eurusd?userId=${encodeURIComponent(userId)}&interval=${interval}&count=${count}`,
+    }),
   }),
 });
 
@@ -76,6 +163,8 @@ export const {
   useTriggerCycleMutation,
   useEvaluateStrategyMutation,
   useGetHealthQuery,
+  useGetBotCyclesQuery,
+  useGetChartDataQuery,
   useLazyGetBotStatusQuery,
   useLazyGetHealthQuery,
 } = botApi;
