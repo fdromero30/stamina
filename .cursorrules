@@ -1,0 +1,12 @@
+# Reglas del Proyecto
+
+## Preferencias de Idioma y Estilo
+- Responde siempre en español.
+- Escribe los comentarios del código en español y de forma concisa.
+- Mantén un estilo de código limpio, usando funciones cortas (máximo 30 líneas).
+- Implementar imperative shell pattern en el backend 
+
+## Calidad y Automatización
+- Cada vez que crees o modifiques una función, incluye obligatoriamente un bloque de manejo de errores (try/catch).
+- Cada vez que crees o modificques una funcion, incluye pruebas unitarias de codigo para evitar regresiones.
+- Prioriza el uso de código moderno y buenas prácticas de seguridad (nunca dejes contraseñas o llaves de API expuestas).

@@ -2,16 +2,22 @@
 
 import logging
 from datetime import datetime, timezone
+from typing import Any, Optional
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
+from app.bot import persistence
 from app.bot.engine import TradingBotEngine
 from app.bot.scheduler import TradingScheduler
+from app.bot.signals import compute_sma
 from app.integrations.market_data_client import MarketDataClient
-from app.integrations.orders_client import EtoroHttpClient, HttpOrdersClient
+from app.integrations.orders_client import EtoroHttpClient, HttpOrdersClient, OrderRequest
 from app.integrations.strategies_client import StrategiesClient
 from app.settings import settings
+
+# Initialize the persistence database
+persistence.init_db()
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +53,167 @@ async def health() -> dict[str, object]:
     }
 
 
+# ── Chart Data ──────────────────────────────────────────────────────────
+
+
+async def _resolve_symbol_instrument_id(user_id: str, symbol: str) -> Optional[int]:
+    """Resolve an eToro instrument ID from a symbol using the search endpoint."""
+    try:
+        result = await etoro_http_client.search_instruments(
+            user_id=user_id,
+            query=symbol,
+            fields="instrumentId,internalSymbolFull,displayname",
+        )
+        # eToro search response format: { "items": [ { "instrumentId": ..., "internalSymbolFull": ..., "displayname": ... } ] }
+        instruments = result.get("items") or result.get("Items") or result.get("instruments") or result.get("Instruments") or []
+        if isinstance(instruments, dict):
+            instruments = [instruments]
+
+        # Normalize field names (eToro uses camelCase)
+        normalized = []
+        for inst in instruments:
+            inst_id = inst.get("instrumentId") or inst.get("InstrumentID")
+            symbol_full = inst.get("internalSymbolFull") or inst.get("InternalSymbolFull") or ""
+            display_name = inst.get("displayname") or inst.get("DisplayName") or ""
+            if inst_id is not None and inst_id > 0:
+                normalized.append({
+                    "instrumentId": int(inst_id),
+                    "internalSymbolFull": str(symbol_full),
+                    "displayname": str(display_name),
+                })
+
+        if not normalized:
+            logger.warning("No valid instruments found for symbol %s", symbol)
+            return None
+
+        # Try to find an exact match for the symbol (e.g. "EUR/USD")
+        symbol_lower = symbol.lower().replace("/", "")
+        for inst in normalized:
+            full = inst["internalSymbolFull"].lower().replace("/", "")
+            display = inst["displayname"].lower()
+            if symbol_lower in full or symbol_lower in display or "eurusd" in full:
+                return inst["instrumentId"]
+
+        # Fallback: return the first valid instrument
+        logger.warning("No exact match for %s, using first result: %s", symbol, normalized[0])
+        return normalized[0]["instrumentId"]
+    except Exception as e:
+        logger.error("Failed to resolve instrument ID for %s: %s", symbol, e)
+        return None
+
+
+def _parse_timestamp(ts: Optional[str]) -> Optional[str]:
+    """Normalize a candle timestamp to an ISO-8601 string if possible."""
+    if not ts:
+        return None
+    # eToro sometimes returns Unix milliseconds
+    try:
+        if ts.isdigit() and len(ts) >= 13:
+            return datetime.fromtimestamp(int(ts) / 1000, tz=timezone.utc).isoformat()
+        if ts.isdigit() and len(ts) == 10:
+            return datetime.fromtimestamp(int(ts), tz=timezone.utc).isoformat()
+    except (ValueError, OSError):
+        pass
+    return ts
+
+
+@app.get("/chart/eurusd")
+async def chart_eurusd(
+    userId: str,
+    interval: str = "5m",
+    count: int = 300,
+) -> dict[str, Any]:
+    """
+    Return EUR/USD chart data for the Strategy Chart dashboard.
+
+    Includes:
+    - Historical candles (OHLC + timestamp)
+    - MA9 and MA200 series
+    - Current bid/ask (last price)
+    """
+    symbol = "EUR/USD"
+
+    # 1. Resolve instrument ID
+    instrument_id = await _resolve_symbol_instrument_id(userId, symbol)
+    if instrument_id is None:
+        raise HTTPException(status_code=404, detail=f"Cannot resolve symbol {symbol}")
+
+    # 2. Fetch candles
+    candles = await market_data_client.get_candles(
+        user_id=userId,
+        instrument_id=instrument_id,
+        interval=interval,
+        count=count,
+    )
+    if not candles:
+        raise HTTPException(status_code=502, detail="No candle data received from eToro")
+
+    # 3. Fetch current rates
+    rates = await market_data_client.get_rates(userId, [instrument_id])
+    last_bid: Optional[float] = None
+    last_ask: Optional[float] = None
+    if rates:
+        last_bid = rates[0].bid
+        last_ask = rates[0].ask
+
+    # 4. Build candle + MA series for the chart
+    closes = [c.close for c in candles]
+    ma9 = compute_sma(closes, settings.default_ma_short)
+    ma200 = compute_sma(closes, settings.default_ma_long)
+
+    # Build MA series aligned to candle timestamps
+    ma9_series: list[dict[str, Any]] = []
+    ma200_series: list[dict[str, Any]] = []
+
+    # MA9: first valid value appears at index (ma_short_period - 1)
+    ma9_offset = settings.default_ma_short - 1
+    for i, val in enumerate(ma9):
+        idx = i + ma9_offset
+        if idx < len(candles):
+            ts = _parse_timestamp(candles[idx].timestamp)
+            ma9_series.append({
+                "time": ts or candles[idx].timestamp or f"idx-{idx}",
+                "value": round(val, 5),
+            })
+
+    # MA200: first valid value appears at index (ma_long_period - 1)
+    ma200_offset = settings.default_ma_long - 1
+    for i, val in enumerate(ma200):
+        idx = i + ma200_offset
+        if idx < len(candles):
+            ts = _parse_timestamp(candles[idx].timestamp)
+            ma200_series.append({
+                "time": ts or candles[idx].timestamp or f"idx-{idx}",
+                "value": round(val, 5),
+            })
+
+    # 5. Build candle series
+    candle_series: list[dict[str, Any]] = []
+    for c in candles:
+        ts = _parse_timestamp(c.timestamp)
+        candle_series.append({
+            "time": ts or c.timestamp or "",
+            "open": c.open,
+            "high": c.high,
+            "low": c.low,
+            "close": c.close,
+        })
+
+    return {
+        "symbol": symbol,
+        "instrument_id": instrument_id,
+        "interval": interval,
+        "candles": candle_series,
+        "ma9": ma9_series,
+        "ma200": ma200_series,
+        "last_price": {
+            "bid": last_bid,
+            "ask": last_ask,
+        },
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+
+
 # ── Bot Control ─────────────────────────────────────────────────────────
 
 
@@ -55,6 +222,7 @@ async def start_bot() -> dict[str, object]:
     """Start the automated trading scheduler."""
     try:
         await scheduler.start()
+        persistence.save_bot_state("running", True)
         return {
             "status": "started",
             "interval_seconds": scheduler.interval_seconds,
@@ -67,6 +235,7 @@ async def start_bot() -> dict[str, object]:
 async def stop_bot() -> dict[str, object]:
     """Stop the automated trading scheduler."""
     await scheduler.stop()
+    persistence.save_bot_state("running", False)
     return {
         "status": "stopped",
         "cycles_completed": scheduler.cycle_count,
@@ -82,6 +251,15 @@ async def bot_status() -> dict[str, object]:
         "cycles_completed": scheduler.cycle_count,
         "last_run": scheduler.last_run.isoformat() if scheduler.last_run else None,
         "next_run": scheduler.next_run.isoformat() if scheduler.next_run else None,
+    }
+
+
+@app.get("/bot/cycles")
+async def bot_cycles() -> dict[str, object]:
+    """Get the recent cycle history and open positions for observability."""
+    return {
+        "cycles": scheduler.cycle_history,
+        "open_positions": engine.open_positions,
     }
 
 
@@ -133,10 +311,10 @@ async def dry_run() -> dict[str, object]:
 async def submit_market_order(payload: OrderPayload) -> dict[str, object]:
     """Submit a market order via the Java backend."""
     orders_client = HttpOrdersClient(base_url=base_url)
-    order = type("OrderRequest", (), {
-        "user_id": "00000000-0000-0000-0000-000000000000",
-        "symbol": payload.symbol,
-        "side": payload.side,
-        "units": payload.units,
-    })()
+    order = OrderRequest(
+        user_id="00000000-0000-0000-0000-000000000000",
+        symbol=payload.symbol,
+        side=payload.side,
+        units=payload.units,
+    )
     return await orders_client.place_order(order)

@@ -6,3 +6,5 @@ target/
 *.class
 *.jar
 *.log
+*.db
+trading-core-python/data/

@@ -6,6 +6,31 @@ import httpx
 
 from app.bot.signals import Candle, MarketData
 
+# ── eToro interval mapping ──────────────────────────────────────────────
+# The eToro API expects named intervals (e.g. "FiveMinutes") in the URL path,
+# not shorthand like "5m".  This map converts common shorthand formats to the
+# values the eToro API accepts.
+_ETORO_INTERVAL_MAP: dict[str, str] = {
+    "1m": "OneMinute",
+    "5m": "FiveMinutes",
+    "10m": "TenMinutes",
+    "15m": "FifteenMinutes",
+    "30m": "ThirtyMinutes",
+    "1h": "OneHour",
+    "4h": "FourHours",
+    "1d": "OneDay",
+    "1w": "OneWeek",
+}
+
+
+def _to_etoro_interval(interval: str) -> str:
+    """Convert a shorthand interval (e.g. ``5m``) to the eToro API format (e.g. ``FiveMinutes``).
+
+    If the interval is already in eToro format or is not in the map, it is
+    returned unchanged so that callers can pass eToro-native values directly.
+    """
+    return _ETORO_INTERVAL_MAP.get(interval, interval)
+
 
 class MarketDataClient:
     """Fetches market data via the Java backend's eToro proxy endpoints."""
@@ -55,7 +80,7 @@ class MarketDataClient:
                 params={
                     "userId": user_id,
                     "direction": "desc",
-                    "interval": interval,
+                    "interval": _to_etoro_interval(interval),
                     "count": count,
                 },
             )
@@ -97,7 +122,8 @@ class MarketDataClient:
         """
         Parse the candles response from eToro.
         The response format is typically:
-        { "Candles": [ { "Open": ..., "High": ..., "Low": ..., "Close": ... }, ... ] }
+        { "Candles": [ { "Open": ..., "High": ..., "Low": ..., "Close": ...,
+                         "FromDate": "...", "FromDateISO": "..." }, ... ] }
         Note: candles are returned in descending order (most recent first).
         """
         candles_list: list[dict[str, Any]] = (
@@ -116,12 +142,27 @@ class MarketDataClient:
             low = c.get("Low") or c.get("low")
             close = c.get("Close") or c.get("close")
 
+            # Extract timestamp (eToro may provide several field names)
+            timestamp = (
+                c.get("FromDateISO")
+                or c.get("fromDateISO")
+                or c.get("FromDate")
+                or c.get("fromDate")
+                or c.get("DateTime")
+                or c.get("dateTime")
+                or c.get("StartTime")
+                or c.get("startTime")
+                or c.get("Timestamp")
+                or c.get("timestamp")
+            )
+
             if open_ is not None and high is not None and low is not None and close is not None:
                 result.append(Candle(
                     open=float(open_),
                     high=float(high),
                     low=float(low),
                     close=float(close),
+                    timestamp=str(timestamp) if timestamp is not None else None,
                 ))
 
         return result
