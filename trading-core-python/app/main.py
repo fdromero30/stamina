@@ -57,49 +57,88 @@ async def health() -> dict[str, object]:
 
 
 async def _resolve_symbol_instrument_id(user_id: str, symbol: str) -> Optional[int]:
-    """Resolve an eToro instrument ID from a symbol using the search endpoint."""
-    try:
-        result = await etoro_http_client.search_instruments(
-            user_id=user_id,
-            query=symbol,
-            fields="instrumentId,internalSymbolFull,displayname",
-        )
-        # eToro search response format: { "items": [ { "instrumentId": ..., "internalSymbolFull": ..., "displayname": ... } ] }
-        instruments = result.get("items") or result.get("Items") or result.get("instruments") or result.get("Instruments") or []
-        if isinstance(instruments, dict):
-            instruments = [instruments]
+    """Resolve an eToro instrument ID from a symbol using the search endpoint.
 
-        # Normalize field names (eToro uses camelCase)
-        normalized = []
-        for inst in instruments:
-            inst_id = inst.get("instrumentId") or inst.get("InstrumentID")
-            symbol_full = inst.get("internalSymbolFull") or inst.get("InternalSymbolFull") or ""
-            display_name = inst.get("displayname") or inst.get("DisplayName") or ""
-            if inst_id is not None and inst_id > 0:
-                normalized.append({
-                    "instrumentId": int(inst_id),
-                    "internalSymbolFull": str(symbol_full),
-                    "displayname": str(display_name),
-                })
+    eToro uses negative instrument IDs for forex pairs (e.g. EUR/USD = -100000),
+    so we must NOT filter them out.  We also try several search queries because
+    the eToro search endpoint can be inconsistent about matching.
+    """
+    # Normalize the symbol for matching (e.g. "EUR/USD" -> "eurusd")
+    symbol_lower = symbol.lower().replace("/", "")
 
-        if not normalized:
-            logger.warning("No valid instruments found for symbol %s", symbol)
-            return None
+    # Try progressively more specific queries
+    queries = [symbol, symbol_lower, symbol.replace("/", "")]
+    for query in queries:
+        try:
+            result = await etoro_http_client.search_instruments(
+                user_id=user_id,
+                query=query,
+                fields="instrumentId,internalSymbolFull,displayname",
+            )
+            # eToro /market-data/instruments response format:
+            # { "instrumentDisplayDatas": [ { "instrumentID": 1, "instrumentDisplayName": "EUR/USD",
+            #     "symbolFull": "EURUSD", ... } ] }
+            # Also handle the legacy /market-data/search format:
+            # { "items": [ { "instrumentId": ..., "internalSymbolFull": ..., "displayname": ... } ] }
+            instruments = (
+                result.get("instrumentDisplayDatas")
+                or result.get("InstrumentDisplayDatas")
+                or result.get("items")
+                or result.get("Items")
+                or result.get("instruments")
+                or result.get("Instruments")
+                or []
+            )
+            if isinstance(instruments, dict):
+                instruments = [instruments]
 
-        # Try to find an exact match for the symbol (e.g. "EUR/USD")
-        symbol_lower = symbol.lower().replace("/", "")
-        for inst in normalized:
-            full = inst["internalSymbolFull"].lower().replace("/", "")
-            display = inst["displayname"].lower()
-            if symbol_lower in full or symbol_lower in display or "eurusd" in full:
-                return inst["instrumentId"]
+            # Normalize field names (eToro uses camelCase).  Keep ALL instruments,
+            # including negative IDs (forex pairs).
+            normalized = []
+            for inst in instruments:
+                inst_id = inst.get("instrumentId") or inst.get("instrumentID") or inst.get("InstrumentID")
+                symbol_full = (
+                    inst.get("symbolFull")
+                    or inst.get("SymbolFull")
+                    or inst.get("internalSymbolFull")
+                    or inst.get("InternalSymbolFull")
+                    or ""
+                )
+                display_name = (
+                    inst.get("instrumentDisplayName")
+                    or inst.get("InstrumentDisplayName")
+                    or inst.get("displayname")
+                    or inst.get("DisplayName")
+                    or ""
+                )
+                if inst_id is not None:
+                    normalized.append({
+                        "instrumentId": int(inst_id),
+                        "internalSymbolFull": str(symbol_full),
+                        "displayname": str(display_name),
+                    })
 
-        # Fallback: return the first valid instrument
-        logger.warning("No exact match for %s, using first result: %s", symbol, normalized[0])
-        return normalized[0]["instrumentId"]
-    except Exception as e:
-        logger.error("Failed to resolve instrument ID for %s: %s", symbol, e)
-        return None
+            if not normalized:
+                continue
+
+            # Try to find an exact match for the symbol (e.g. "EUR/USD")
+            for inst in normalized:
+                full = inst["internalSymbolFull"].lower().replace("/", "")
+                display = inst["displayname"].lower()
+                if symbol_lower in full or symbol_lower in display or "eurusd" in full:
+                    return inst["instrumentId"]
+
+            # If we found instruments but no exact match, keep the first one
+            # as a fallback for this query attempt.
+            logger.warning("No exact match for %s in query '%s', using first result: %s",
+                           symbol, query, normalized[0])
+            return normalized[0]["instrumentId"]
+        except Exception as e:
+            logger.warning("Search query '%s' failed for %s: %s", query, symbol, e)
+            continue
+
+    logger.error("Failed to resolve instrument ID for %s after all search attempts", symbol)
+    return None
 
 
 def _parse_timestamp(ts: Optional[str]) -> Optional[str]:

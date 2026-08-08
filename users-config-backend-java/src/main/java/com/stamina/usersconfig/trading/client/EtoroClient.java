@@ -80,10 +80,13 @@ public class EtoroClient {
 
     @SuppressWarnings("unchecked")
     public Map<String, Object> searchInstruments(UUID userId, String query, String fields) {
+        // The /market-data/search endpoint does not filter results reliably.
+        // Use /market-data/instruments which returns instrumentDisplayDatas
+        // with the correct instrumentID for the searched symbol.
         return (Map<String, Object>) applyHeaders(
                 restClient.get()
                         .uri(uriBuilder -> uriBuilder
-                                .path("/market-data/search")
+                                .path("/market-data/instruments")
                                 .queryParam("searchText", query)
                                 .queryParam("fields", fields)
                                 .build()),

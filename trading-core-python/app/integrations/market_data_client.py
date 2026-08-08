@@ -121,22 +121,37 @@ class MarketDataClient:
     def _parse_candles(self, data: dict[str, Any]) -> list[Candle]:
         """
         Parse the candles response from eToro.
-        The response format is typically:
+
+        The eToro API returns candles in a nested structure:
+        { "candles": [ { "instrumentId": ..., "candles": [ { "open": ...,
+            "high": ..., "low": ..., "close": ..., "fromDate": "..." }, ... ] } ] }
+
+        Some proxies may return a flat structure instead:
         { "Candles": [ { "Open": ..., "High": ..., "Low": ..., "Close": ...,
                          "FromDate": "...", "FromDateISO": "..." }, ... ] }
+
         Note: candles are returned in descending order (most recent first).
         """
-        candles_list: list[dict[str, Any]] = (
-            data.get("Candles") or data.get("candles") or []
-        )
+        # Handle the nested eToro structure: { "candles": [ { "candles": [...] } ] }
+        candles_list: list[dict[str, Any]] = data.get("Candles") or data.get("candles") or []
         if isinstance(candles_list, dict):
             candles_list = [candles_list]
 
+        # If the top-level list contains nested "candles" arrays, flatten them
+        flattened: list[dict[str, Any]] = []
+        for entry in candles_list:
+            nested = entry.get("Candles") or entry.get("candles")
+            if isinstance(nested, list):
+                flattened.extend(nested)
+            else:
+                # Flat entry (already a candle)
+                flattened.append(entry)
+
         # eToro returns candles in descending order; reverse to ascending
-        candles_list.reverse()
+        flattened.reverse()
 
         result: list[Candle] = []
-        for c in candles_list:
+        for c in flattened:
             open_ = c.get("Open") or c.get("open")
             high = c.get("High") or c.get("high")
             low = c.get("Low") or c.get("low")
