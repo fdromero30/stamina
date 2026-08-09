@@ -1,6 +1,10 @@
 import { createApi, fetchBaseQuery } from "@reduxjs/toolkit/query/react";
 
-const tradingCoreUrl = import.meta.env.VITE_TRADING_CORE_URL ?? "http://localhost:8000";
+// In production the trading core is reached through the nginx proxy at a
+// RELATIVE path (/trading-core). This keeps internal hosts/ports out of the
+// browser bundle. In local dev (Vite) the proxy rewrites /trading-core ->
+// http://localhost:8000.
+const tradingCoreUrl = import.meta.env.VITE_TRADING_CORE_URL ?? "/trading-core";
 
 export type BotStatus = {
   running: boolean;

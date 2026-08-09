@@ -73,8 +73,16 @@ class TradingBotEngine:
 
         # Check if we're within EUR/USD trading hours (Sun 5pm ET - Fri 5pm ET)
         if not self._is_within_trading_hours():
-            logger.info("Outside EUR/USD trading hours, skipping cycle")
-            return {"skipped": True, "reason": "Outside trading hours"}
+            next_in = self._seconds_until_next_trading_window()
+            logger.info(
+                "Outside EUR/USD trading hours, skipping cycle (next window in %.1f hours)",
+                next_in / 3600,
+            )
+            return {
+                "skipped": True,
+                "reason": "Outside trading hours",
+                "next_run_seconds": next_in,
+            }
 
         results: dict[str, Any] = {
             "evaluations": [],
@@ -551,6 +559,64 @@ class TradingBotEngine:
         else:
             # Monday-Thursday: 24 hours
             return True
+
+    @staticmethod
+    def _seconds_until_next_trading_window() -> int:
+        """
+        Calculate the number of seconds until the next trading window opens.
+
+        The FX market opens Sunday 5pm ET.  This is used by the scheduler to
+        sleep for the whole weekend instead of waking up every interval.
+        """
+        now_utc = datetime.now(timezone.utc)
+
+        if HAS_PYTZ:
+            try:
+                eastern = pytz.timezone(settings.trading_timezone)
+                now_et = now_utc.astimezone(eastern)
+            except Exception:
+                now_et = now_utc
+        else:
+            # Fallback: approximate ET as UTC-5 (or UTC-4 during EDT)
+            now_et = now_utc
+
+        market_open_minutes = 17 * 60  # 5:00 PM ET
+
+        # Build the next market-open datetime in ET wall-clock time.
+        # ``now_et`` is tz-aware here, so strip tzinfo to build a naive wall-clock
+        # datetime and then re-attach the ET zone with pytz.localize() (which
+        # REQUIRES a naive datetime; localizing an aware one corrupts the offset).
+        today_local_naive = now_et.replace(
+            hour=0, minute=0, second=0, microsecond=0, tzinfo=None
+        )
+        days_until_sunday = (6 - today_local_naive.weekday()) % 7  # days until next Sunday
+        next_sunday_naive = today_local_naive + timedelta(days=days_until_sunday)
+
+        if days_until_sunday == 0 and now_et.hour * 60 + now_et.minute < market_open_minutes:
+            # It is Sunday before 5pm ET — market opens today at 5pm ET.
+            next_open_naive = next_sunday_naive.replace(hour=17, minute=0, second=0, microsecond=0)
+        elif days_until_sunday == 0 and now_et.hour * 60 + now_et.minute >= market_open_minutes:
+            # Sunday after 5pm ET — market is open; should not be called, but guard anyway.
+            next_open_naive = next_sunday_naive.replace(hour=17, minute=0, second=0, microsecond=0) + timedelta(days=7)
+        else:
+            # Any other weekday outside hours (Friday after 5pm, all Saturday, etc.)
+            next_open_naive = next_sunday_naive.replace(hour=17, minute=0, second=0, microsecond=0)
+
+        # Attach the ET timezone so the subtraction is DST-safe.
+        try:
+            if HAS_PYTZ:
+                et_timezone = pytz.timezone(settings.trading_timezone)
+                next_open_et = et_timezone.localize(next_open_naive)  # naive → aware ET
+            else:
+                # Fallback: assume a fixed UTC-5 offset when pytz is unavailable.
+                next_open_et = next_open_naive.replace(tzinfo=timezone(timedelta(hours=-5)))
+        except Exception:
+            # Last resort: treat the naive local time as UTC.
+            next_open_et = next_open_naive.replace(tzinfo=timezone.utc)
+
+        delta = next_open_et - now_utc
+        seconds = int(delta.total_seconds())
+        return max(seconds, 60)  # never return less than 1 minute
 
     def _to_signal_config(self, dto: StrategyConfigDTO) -> "StrategyConfig":
         """Convert a StrategyConfigDTO to the signals.StrategyConfig used by the pure functions."""
