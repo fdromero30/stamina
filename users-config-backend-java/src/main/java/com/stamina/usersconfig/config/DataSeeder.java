@@ -2,7 +2,6 @@ package com.stamina.usersconfig.config;
 
 import com.stamina.usersconfig.strategy.entity.StopLossType;
 import com.stamina.usersconfig.strategy.entity.StrategyConfig;
-import com.stamina.usersconfig.strategy.repository.MLStrategyRepository;
 import com.stamina.usersconfig.strategy.repository.StopLossTypeRepository;
 import com.stamina.usersconfig.strategy.repository.StrategyConfigRepository;
 import com.stamina.usersconfig.user.entity.AppUser;
@@ -24,18 +23,15 @@ public class DataSeeder implements CommandLineRunner {
     private final AppUserRepository userRepository;
     private final StrategyConfigRepository strategyRepository;
     private final StopLossTypeRepository stopLossTypeRepository;
-    private final MLStrategyRepository mlStrategyRepository;
     private final PasswordEncoder passwordEncoder;
 
     public DataSeeder(AppUserRepository userRepository,
                       StrategyConfigRepository strategyRepository,
                       StopLossTypeRepository stopLossTypeRepository,
-                      MLStrategyRepository mlStrategyRepository,
                       PasswordEncoder passwordEncoder) {
         this.userRepository = userRepository;
         this.strategyRepository = strategyRepository;
         this.stopLossTypeRepository = stopLossTypeRepository;
-        this.mlStrategyRepository = mlStrategyRepository;
         this.passwordEncoder = passwordEncoder;
     }
 

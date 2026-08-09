@@ -22,6 +22,18 @@ describe("routeFromPath", () => {
     expect(routeFromPath("/strategies")).toBe("strategies");
   });
 
+  it("returns 'etoro-test' for /etoro-test", () => {
+    expect(routeFromPath("/etoro-test")).toBe("etoro-test");
+  });
+
+  it("returns 'bot-status' for /bot-status", () => {
+    expect(routeFromPath("/bot-status")).toBe("bot-status");
+  });
+
+  it("returns 'chart' for /chart", () => {
+    expect(routeFromPath("/chart")).toBe("chart");
+  });
+
   it("returns 'landing' for unknown paths", () => {
     expect(routeFromPath("/unknown")).toBe("landing");
     expect(routeFromPath("/")).toBe("landing");
@@ -47,5 +59,17 @@ describe("pathFromRoute", () => {
 
   it("returns '/strategies' for 'strategies'", () => {
     expect(pathFromRoute("strategies")).toBe("/strategies");
+  });
+
+  it("returns '/etoro-test' for 'etoro-test'", () => {
+    expect(pathFromRoute("etoro-test")).toBe("/etoro-test");
+  });
+
+  it("returns '/bot-status' for 'bot-status'", () => {
+    expect(pathFromRoute("bot-status")).toBe("/bot-status");
+  });
+
+  it("returns '/chart' for 'chart'", () => {
+    expect(pathFromRoute("chart")).toBe("/chart");
   });
 });
