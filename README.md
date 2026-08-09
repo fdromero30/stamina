@@ -1,11 +1,14 @@
 # Stamina Trading App
 
-Aplicación web de trading automatizado compuesta por tres servicios independientes:
+Aplicación web de trading automatizado compuesta por varios servicios independientes:
 
-- **`frontend-react`**: interfaz web en React + TypeScript (Vite).
+- **`proxy`**: reverse proxy **Caddy** — único punto de entrada público (puertos 80/443) con SSL automático (Let's Encrypt).
+- **`frontend-react`**: interfaz web en React + TypeScript (Vite) servida por Nginx.
 - **`trading-core-python`**: core del bot de trading en Python (FastAPI).
 - **`users-config-backend-java`**: backend Java (Spring Boot) para usuarios, API keys, estrategias y operaciones de trading.
 - **`postgres`**: base de datos PostgreSQL para usuarios, configuraciones y estrategias.
+
+> 🔒 **Seguridad en producción:** solo el servicio `proxy` (Caddy) se expone a internet. Los backends, la base de datos y el frontend viven en la red interna de Docker y **no publican puertos** al exterior.
 
 ---
 
@@ -83,11 +86,13 @@ Todos los servicios deben aparecer con estado `Up` (o `healthy` en el caso de Po
 
 | Servicio | URL |
 |---|---|
-| Frontend (React) | http://localhost:5173 |
-| Trading Core API (FastAPI) | http://localhost:8000 |
-| Trading Core docs (Swagger) | http://localhost:8000/docs |
-| Users/Config Backend (Spring Boot) | http://localhost:8080 |
-| Postgres | `localhost:5432` |
+| Frontend (React) | http://localhost (vía proxy Caddy) |
+| Trading Core API (FastAPI) | http://localhost (vía proxy Caddy) |
+| Users/Config Backend (Spring Boot) | http://localhost (vía proxy Caddy) |
+
+> 🔒 **En producción con SSL**, la URL es `https://tu-dominio.com`.
+
+> **Desarrollo local sin SSL:** el servicio `proxy` (Caddy) arranca con la configuración de tu `DOMAIN`. Si aún no has configurado el dominio, los backends no son accesibles desde el host (están solo en la red interna de Docker). Para desarrollo local, edita `.env` y usa `DOMAIN=localhost` (Caddy servirá por HTTP en `http://localhost` sin certificado).
 
 ### 6. Detener los servicios
 
@@ -99,6 +104,61 @@ Para detener y **eliminar los datos de la base de datos**:
 
 ```bash
 docker compose down -v
+```
+
+---
+
+## 🌍 Despliegue en producción (VPS)
+
+La aplicación está preparada para desplegarse en un VPS (Hostinger, DigitalOcean, etc.) con **HTTPS automático**  con Caddy + Let's Encrypt.
+
+### Arquitectura de seguridad
+
+```
+Internet ──▶ 80/443 (proxy Caddy) ──▶ frontend (nginx) ──▶ /api → users-config-backend
+                                                            └─ /trading-core → trading-core
+```
+
+- **Solo el proxy (Caddy)** se expone a internet.
+- Los backends, Postgres y el frontend **no publican puertos** — solo son accesibles en la red interna de Docker.
+- Caddy genera y renueva certificados SSL automáticamente (Let's Encrypt, **gratis**) y redirige HTTP → HTTPS.
+
+### Pasos
+
+#### 1. Requisitos
+- Un **dominio** (o subdominio, ej. `stamina.tudominio.com`) apuntando al IP del VPS (registro A en el DNS).
+- Puertos **80** y **443** abiertos en el firewall del VPS (hPanel/ufw).
+
+#### 2. Configurar variables de entorno
+
+```bash
+cp .env.example .env
+nano .env
+```
+
+Valores obligatorios:
+
+| Variable | Ejemplo |
+|---|---|
+| `DOMAIN` | `stamina.tudominio.com` |
+| `ACME_EMAIL` | `tu@email.com` |
+| `POSTGRES_PASSWORD` | `openssl rand -hex 24` |
+| `CRYPTO_MASTER_KEY` | `openssl rand -hex 32` |
+| `CORS_ALLOWED_ORIGINS` | `https://stamina.tudominio.com` |
+
+#### 3. Levantar
+
+```bash
+docker compose up -d --build
+```
+
+Caddy detectará el dominio y obtendrá el certificado SSL automáticamente (los primeros segundos servirá HTTP mientras valida el dominio).
+
+#### 4. Verificar
+
+```bash
+docker compose ps
+curl -I https://tu-dominio.com
 ```
 
 ---

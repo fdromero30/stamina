@@ -120,18 +120,38 @@ class TradingScheduler:
                 now.timestamp() + self._interval, tz=timezone.utc
             )
 
+            # Duration to sleep before the next cycle.  Normally this is the
+            # configured interval, but when the engine reports it is outside
+            # trading hours (e.g. weekend), we sleep until the next window
+            # opens instead of waking up every interval.
+            sleep_seconds = self._interval
+
             try:
-                await self._run_single_cycle(source="auto")
+                result = await self._run_single_cycle(source="auto")
                 self._cycle_count += 1
                 self._last_run = datetime.now(timezone.utc)
+
+                next_in = result.get("next_run_seconds")
+                if result.get("skipped") and isinstance(next_in, (int, float)) and next_in > 0:
+                    sleep_seconds = int(next_in)
+                    logger.info(
+                        "Cycle skipped; sleeping %.1f hours until next trading window",
+                        sleep_seconds / 3600,
+                    )
                 self._persist_state()
             except asyncio.CancelledError:
                 raise
             except Exception:
                 logger.exception("Error in trading cycle")
 
+            self._next_run = datetime.fromtimestamp(
+                datetime.now(timezone.utc).timestamp() + sleep_seconds,
+                tz=timezone.utc,
+            )
+            self._persist_state()
+
             # Wait for the next interval (or until stopped)
-            await self._sleep_until_next()
+            await self._sleep_until_next(sleep_seconds)
 
     async def _run_single_cycle(self, source: str) -> dict:
         """Execute one trading cycle and record it in the history."""
@@ -186,9 +206,15 @@ class TradingScheduler:
         if self._next_run:
             persistence.save_bot_state("next_run", self._next_run.isoformat())
 
-    async def _sleep_until_next(self) -> None:
-        """Sleep for the interval, checking periodically if stopped."""
+    async def _sleep_until_next(self, seconds: Optional[int] = None) -> None:
+        """Sleep for the given duration, checking periodically if stopped.
+
+        ``seconds`` defaults to the configured interval when not provided.
+        This allows the scheduler to sleep for an extended period (e.g. the
+        weekend) when the engine reports it is outside trading hours.
+        """
+        duration = float(seconds if seconds is not None else self._interval)
         slept = 0.0
-        while slept < self._interval and self._running:
+        while slept < duration and self._running:
             await asyncio.sleep(1.0)
             slept += 1.0

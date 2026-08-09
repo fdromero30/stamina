@@ -1,0 +1,16 @@
+# Caddy reverse proxy configuration
+# Caddy automatically obtains and renews SSL certificates from Let's Encrypt.
+# It also redirects HTTP -> HTTPS automatically.
+
+# Use SCHEME=http for local development (no SSL), https for production (default).
+{$SCHEME}://{$DOMAIN} {
+    # Only enable Let's Encrypt email when using HTTPS (production).
+    tls {$ACME_EMAIL} {
+        on_demand
+    }
+
+    # Proxy all traffic to the frontend (nginx) container.
+    # The frontend nginx then routes /api -> users-config-backend and
+    # /trading-core -> trading-core internally.
+    reverse_proxy frontend:80
+}
