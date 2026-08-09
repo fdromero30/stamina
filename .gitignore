@@ -1,10 +1,28 @@
+# Node
 node_modules/
-.env
 dist/
+
+# Environment
+.env
+
+# OS
 .DS_Store
+
+# Java
 target/
 *.class
 *.jar
+
+# Logs & Data
 *.log
 *.db
 trading-core-python/data/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.venv/
+venv/
+*.egg-info/
