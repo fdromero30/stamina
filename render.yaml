@@ -16,8 +16,8 @@ services:
       - key: CRYPTO_MASTER_KEY
         sync: false
 
-  # 2. EL CORE DE PYTHON (Servicio Privado Interno)
-  - type: pserv
+  # 2. EL CORE DE PYTHON (Cambiado a tipo web para que sea gratis)
+  - type: web
     name: trading-core
     env: docker
     dockerContext: ./trading-core-python
@@ -28,7 +28,7 @@ services:
         value: http://users-config-backend:8080
       - key: BOT_API_TOKEN
         sync: false 
-
+        
   # 3. EL FRONTEND DE REACT (Servicio Web Público)
   - type: web
     name: stamina-frontend
