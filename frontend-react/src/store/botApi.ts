@@ -90,6 +90,16 @@ export type LinePoint = {
   value: number;
 };
 
+export type EngineState = {
+  running: boolean;
+  started_at: string | null;
+  cycle_count: number;
+  last_run: string | null;
+  next_run: string | null;
+  open_positions: Record<string, OpenPosition[]>;
+  last_evaluation: any | null;
+};
+
 export type ChartData = {
   symbol: string;
   instrument_id: number;
@@ -102,6 +112,7 @@ export type ChartData = {
     ask: number | null;
   };
   timestamp: string;
+  engine: EngineState;
 };
 
 export const botApi = createApi({
@@ -153,9 +164,12 @@ export const botApi = createApi({
       query: () => "/bot/cycles",
     }),
 
-    getChartData: builder.query<ChartData, { userId: string; interval?: string; count?: number }>({
-      query: ({ userId, interval = "5m", count = 300 }) =>
-        `/chart/eurusd?userId=${encodeURIComponent(userId)}&interval=${interval}&count=${count}`,
+    getChartData: builder.query<
+      ChartData,
+      { userId: string; symbol: string; interval?: string; count?: number }
+    >({
+      query: ({ userId, symbol, interval = "5m", count = 300 }) =>
+        `/chart/${encodeURIComponent(symbol)}?userId=${encodeURIComponent(userId)}&interval=${interval}&count=${count}`,
     }),
   }),
 });

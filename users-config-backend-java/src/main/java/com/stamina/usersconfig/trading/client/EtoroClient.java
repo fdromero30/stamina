@@ -80,6 +80,9 @@ public class EtoroClient {
 
     @SuppressWarnings("unchecked")
     public Map<String, Object> searchInstruments(UUID userId, String query, String fields) {
+        if (config.isMock()) {
+            return mockSearchInstruments(query);
+        }
         // The /market-data/search endpoint does not filter results reliably.
         // Use /market-data/instruments which returns instrumentDisplayDatas
         // with the correct instrumentID for the searched symbol.
@@ -95,8 +98,51 @@ public class EtoroClient {
                 .body(Map.class);
     }
 
+    // ── Mock data for local development (no real eToro credentials) ──
+
+    private Map<String, Object> mockSearchInstruments(String query) {
+        String q = query.toLowerCase().replace("/", "");
+        // Map common symbols to mock instrument IDs.
+        // Forex pairs use negative IDs (eToro convention); crypto/indices use positive.
+        record InstrumentDef(int id, String symbolFull, String displayName) {}
+        InstrumentDef[] defs = {
+            new InstrumentDef(-100000, "EURUSD", "EUR/USD"),
+            new InstrumentDef(-100001, "GBPUSD", "GBP/USD"),
+            new InstrumentDef(-100002, "XAUUSD", "XAU/USD"),
+            new InstrumentDef(2, "BTC", "BTC"),
+            new InstrumentDef(3, "ETH", "ETH"),
+            new InstrumentDef(4, "AAPL", "AAPL"),
+            new InstrumentDef(5, "TSLA", "TSLA"),
+            new InstrumentDef(6, "SPX500", "SPX500"),
+        };
+        for (InstrumentDef d : defs) {
+            if (d.symbolFull.contains(q) || d.displayName.toLowerCase().contains(q)) {
+                return Map.of(
+                    "instrumentDisplayDatas", List.of(Map.of(
+                        "instrumentID", d.id,
+                        "instrumentDisplayName", d.displayName,
+                        "symbolFull", d.symbolFull,
+                        "instrumentTypeID", d.id < 0 ? 1 : 5
+                    ))
+                );
+            }
+        }
+        // Fallback: return EUR/USD
+        return Map.of(
+            "instrumentDisplayDatas", List.of(Map.of(
+                "instrumentID", -100000,
+                "instrumentDisplayName", "EUR/USD",
+                "symbolFull", "EURUSD",
+                "instrumentTypeID", 1
+            ))
+        );
+    }
+
     @SuppressWarnings("unchecked")
     public Map<String, Object> getInstrumentRates(UUID userId, List<Integer> instrumentIds) {
+        if (config.isMock()) {
+            return mockRates(instrumentIds);
+        }
         String ids = instrumentIds.stream()
                 .map(String::valueOf)
                 .reduce((a, b) -> a + "," + b)
@@ -112,6 +158,9 @@ public class EtoroClient {
     @SuppressWarnings("unchecked")
     public Map<String, Object> getCandles(UUID userId, int instrumentId,
                                            String direction, String interval, int candlesCount) {
+        if (config.isMock()) {
+            return mockCandles(instrumentId, interval, candlesCount);
+        }
         return (Map<String, Object>) applyHeaders(
                 restClient.get()
                         .uri("/market-data/instruments/{instrumentId}/history/candles/{direction}/{interval}/{candlesCount}",
@@ -119,6 +168,75 @@ public class EtoroClient {
                 userId)
                 .retrieve()
                 .body(Map.class);
+    }
+
+    // ── Mock rates & candles ──────────────────────────────────────
+
+    private Map<String, Object> mockRates(List<Integer> instrumentIds) {
+        List<Map<String, Object>> rates = new java.util.ArrayList<>();
+        for (Integer id : instrumentIds) {
+            double base = mockBasePrice(id);
+            double spread = base * 0.0002;
+            rates.add(Map.of(
+                "InstrumentID", id,
+                "Bid", base,
+                "Ask", base + spread
+            ));
+        }
+        return Map.of("Rates", rates);
+    }
+
+    private Map<String, Object> mockCandles(int instrumentId, String interval, int candlesCount) {
+        double base = mockBasePrice(instrumentId);
+        List<Map<String, Object>> candles = new java.util.ArrayList<>();
+        java.time.Instant now = java.time.Instant.now();
+        long stepSeconds = intervalToSeconds(interval);
+        double price = base;
+        for (int i = candlesCount; i >= 1; i--) {
+            java.time.Instant ts = now.minusSeconds(stepSeconds * i);
+            // Generate a small random walk around the base price
+            double open = price;
+            double close = price + (Math.random() - 0.5) * base * 0.002;
+            double high = Math.max(open, close) + Math.random() * base * 0.001;
+            double low = Math.min(open, close) - Math.random() * base * 0.001;
+            price = close;
+            candles.add(Map.of(
+                "Open", open,
+                "High", high,
+                "Low", low,
+                "Close", close,
+                "FromDateISO", ts.toString()
+            ));
+        }
+        return Map.of("Candles", candles);
+    }
+
+    private double mockBasePrice(int instrumentId) {
+        return switch (instrumentId) {
+            case -100000 -> 1.0850;   // EUR/USD
+            case -100001 -> 1.2700;   // GBP/USD
+            case -100002 -> 2350.0;   // XAU/USD
+            case 2 -> 67000.0;        // BTC
+            case 3 -> 3500.0;         // ETH
+            case 4 -> 220.0;          // AAPL
+            case 5 -> 250.0;          // TSLA
+            case 6 -> 5500.0;         // SPX500
+            default -> 100.0;
+        };
+    }
+
+    private long intervalToSeconds(String interval) {
+        return switch (interval) {
+            case "OneMinute" -> 60L;
+            case "FiveMinutes" -> 300L;
+            case "FifteenMinutes" -> 900L;
+            case "ThirtyMinutes" -> 1800L;
+            case "OneHour" -> 3600L;
+            case "FourHours" -> 14400L;
+            case "OneDay" -> 86400L;
+            case "OneWeek" -> 604800L;
+            default -> 300L;
+        };
     }
 
     // ──────────────────────────────────────────────

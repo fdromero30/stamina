@@ -105,9 +105,13 @@ class MarketDataClient:
 
         result: list[MarketData] = []
         for rate in rates_list:
-            inst_id = rate.get("InstrumentID") or rate.get("instrumentId")
-            bid = rate.get("Bid") or rate.get("bid")
-            ask = rate.get("Ask") or rate.get("ask")
+            inst_id = (
+                rate.get("InstrumentID")
+                or rate.get("instrumentId")
+                or rate.get("instrumentID")
+            )
+            bid = rate.get("Bid") or rate.get("bid") or rate.get("BidRate")
+            ask = rate.get("Ask") or rate.get("ask") or rate.get("AskRate")
 
             if inst_id is not None and bid is not None and ask is not None:
                 result.append(MarketData(

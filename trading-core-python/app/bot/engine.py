@@ -18,6 +18,7 @@ from app.bot.signals import (
 from app.integrations.market_data_client import MarketDataClient
 from app.integrations.orders_client import EtoroHttpClient
 from app.integrations.strategies_client import StrategiesClient, StrategyConfigDTO
+from app.integrations.symbol_resolver import SymbolResolver
 from app.settings import settings
 
 logger = logging.getLogger(__name__)
@@ -54,6 +55,9 @@ class TradingBotEngine:
         self._market_data_client = market_data_client
         self._etoro_http_client = etoro_http_client
         self._base_url = base_url.rstrip("/")
+        # Shared symbol resolver (optional; set by main.py).  Uses the same
+        # cache as the chart endpoint so symbol mapping is consistent.
+        self.symbol_resolver: Optional[SymbolResolver] = None
 
         # In-memory tracker for open positions (per user)
         # { user_id: [ { position_id, entry_price, stop_loss, take_profit, is_buy, ... } ] }
@@ -349,21 +353,61 @@ class TradingBotEngine:
         user_id: str,
         symbol: str,
     ) -> Optional[int]:
-        """Resolve an eToro instrument ID from a symbol using the search endpoint."""
+        """Resolve an eToro instrument ID from a symbol.
+
+        Uses the shared ``SymbolResolver`` (alias map + cached catalogue) when
+        available; otherwise falls back to the old exact-match logic against
+        the full instrument universe.
+        """
+        # Preferred path: shared resolver (consistent with the chart endpoint)
+        if self.symbol_resolver is not None:
+            resolved = await self.symbol_resolver.resolve(user_id, symbol)
+            if resolved is not None:
+                return resolved
+            logger.warning("Could not resolve symbol %s via shared resolver", symbol)
+            return None
+
+        # Fallback: direct exact-match logic (kept for robustness)
+        symbol_lower = symbol.lower().replace("/", "")
         try:
             result = await self._etoro_http_client.search_instruments(
                 user_id=user_id,
                 query=symbol,
                 fields="instrumentId,internalSymbolFull,displayname",
             )
-            # Parse the search result to find the instrument ID
-            instruments = result.get("Instruments") or result.get("instruments") or []
+            instruments = (
+                result.get("instrumentDisplayDatas")
+                or result.get("InstrumentDisplayDatas")
+                or result.get("items")
+                or result.get("Items")
+                or result.get("Instruments")
+                or result.get("instruments")
+                or []
+            )
             if isinstance(instruments, dict):
                 instruments = [instruments]
 
-            if instruments:
-                inst_id = instruments[0].get("InstrumentID") or instruments[0].get("instrumentId")
-                if inst_id is not None:
+            for inst in instruments:
+                inst_id = inst.get("instrumentId") or inst.get("instrumentID") or inst.get("InstrumentID")
+                symbol_full = (
+                    inst.get("symbolFull")
+                    or inst.get("SymbolFull")
+                    or inst.get("internalSymbolFull")
+                    or inst.get("InternalSymbolFull")
+                    or ""
+                )
+                display_name = (
+                    inst.get("instrumentDisplayName")
+                    or inst.get("InstrumentDisplayName")
+                    or inst.get("displayname")
+                    or inst.get("DisplayName")
+                    or ""
+                )
+                if inst_id is None:
+                    continue
+                full = str(symbol_full).lower().replace("/", "")
+                display = str(display_name).lower().replace("/", "")
+                if full == symbol_lower or display == symbol_lower:
                     return int(inst_id)
 
             logger.warning("Could not resolve instrument ID for symbol %s", symbol)
@@ -493,11 +537,18 @@ class TradingBotEngine:
 
     # ── Internal: Portfolio Balance ────────────────────────────────────
 
-    async def _get_available_balance(self, user_id: str, demo: bool = False) -> float:
+    async def _get_available_balance(self, user_id: str, demo: bool = True) -> float:
         """
-        Fetch the available cash balance from eToro portfolio.
-        Only the available (free) balance is used for position sizing,
-        NOT the total equity. This prevents over-leveraging.
+        Fetch the available cash balance from the eToro DEMO portfolio.
+
+        The real portfolio (demo=False) often returns 403 InsufficientPermissions
+        unless the user has explicitly granted the token access, so we default to
+        the DEMO account.  We read ``clientPortfolio.credit`` which is the real
+        available cash returned by eToro.
+
+        Returns 0.0 (NOT the old hardcoded 10_000 fallback) if the balance cannot
+        be read — the scheduler will skip trades with an explicit reason instead
+        of silently sizing positions against a fake balance.
         """
         try:
             if demo:
@@ -505,21 +556,35 @@ class TradingBotEngine:
             else:
                 portfolio = await self._etoro_http_client.get_portfolio(user_id)
 
-            # eToro response typically has: AvailableCash, Equity, UsedMargin
-            available = (portfolio.get("AvailableCash")
-                         or portfolio.get("availableCash")
-                         or portfolio.get("Cash")
-                         or portfolio.get("cash")
-                         or 0)
+            # Real eToro portfolio response:
+            #   { "clientPortfolio": { "credit": 1798.14, "bonusCredit": 0.0, "positions": [...] } }
+            cp = (
+                portfolio.get("clientPortfolio")
+                or portfolio.get("ClientPortfolio")
+                or portfolio
+            )
+            available = (
+                cp.get("credit")
+                or cp.get("Credit")
+                or cp.get("availableCash")
+                or cp.get("AvailableCash")
+                or 0
+            )
             balance = float(available)
+
             if balance <= 0:
-                logger.warning("Available balance is %f for user %s, using fallback", balance, user_id)
-                balance = settings.fallback_account_balance
+                logger.error(
+                    "Available balance is %f for user %s — refusing to use a fake fallback",
+                    balance,
+                    user_id,
+                )
+                return 0.0
+
             logger.info("Available balance for user %s: %.2f", user_id, balance)
             return balance
         except Exception as e:
-            logger.warning("Failed to fetch portfolio for %s: %s. Using fallback balance.", user_id, e)
-            return settings.fallback_account_balance
+            logger.error("Failed to fetch portfolio for %s: %s", user_id, e)
+            return 0.0
 
     # ── Internal: Trading Hours ─────────────────────────────────────────
 

@@ -14,6 +14,7 @@ from app.bot.signals import compute_sma
 from app.integrations.market_data_client import MarketDataClient
 from app.integrations.orders_client import EtoroHttpClient, HttpOrdersClient, OrderRequest
 from app.integrations.strategies_client import StrategiesClient
+from app.integrations.symbol_resolver import SymbolResolver
 from app.settings import settings
 
 # Initialize the persistence database
@@ -28,12 +29,17 @@ strategies_client = StrategiesClient(base_url=base_url)
 market_data_client = MarketDataClient(base_url=base_url)
 etoro_http_client = EtoroHttpClient(base_url=base_url)
 
+# Shared symbol resolver (used by both the chart endpoint and the bot engine)
+symbol_resolver = SymbolResolver(etoro_http_client)
+
 engine = TradingBotEngine(
     strategies_client=strategies_client,
     market_data_client=market_data_client,
     etoro_http_client=etoro_http_client,
     base_url=base_url,
 )
+# Reuse the shared resolver so chart + bot share the same instrument catalogue cache.
+engine.symbol_resolver = symbol_resolver
 
 scheduler = TradingScheduler(interval_seconds=settings.trading_interval_seconds)
 scheduler.set_tick_handler(engine.run_trading_cycle)
@@ -56,91 +62,6 @@ async def health() -> dict[str, object]:
 # ── Chart Data ──────────────────────────────────────────────────────────
 
 
-async def _resolve_symbol_instrument_id(user_id: str, symbol: str) -> Optional[int]:
-    """Resolve an eToro instrument ID from a symbol using the search endpoint.
-
-    eToro uses negative instrument IDs for forex pairs (e.g. EUR/USD = -100000),
-    so we must NOT filter them out.  We also try several search queries because
-    the eToro search endpoint can be inconsistent about matching.
-    """
-    # Normalize the symbol for matching (e.g. "EUR/USD" -> "eurusd")
-    symbol_lower = symbol.lower().replace("/", "")
-
-    # Try progressively more specific queries
-    queries = [symbol, symbol_lower, symbol.replace("/", "")]
-    for query in queries:
-        try:
-            result = await etoro_http_client.search_instruments(
-                user_id=user_id,
-                query=query,
-                fields="instrumentId,internalSymbolFull,displayname",
-            )
-            # eToro /market-data/instruments response format:
-            # { "instrumentDisplayDatas": [ { "instrumentID": 1, "instrumentDisplayName": "EUR/USD",
-            #     "symbolFull": "EURUSD", ... } ] }
-            # Also handle the legacy /market-data/search format:
-            # { "items": [ { "instrumentId": ..., "internalSymbolFull": ..., "displayname": ... } ] }
-            instruments = (
-                result.get("instrumentDisplayDatas")
-                or result.get("InstrumentDisplayDatas")
-                or result.get("items")
-                or result.get("Items")
-                or result.get("instruments")
-                or result.get("Instruments")
-                or []
-            )
-            if isinstance(instruments, dict):
-                instruments = [instruments]
-
-            # Normalize field names (eToro uses camelCase).  Keep ALL instruments,
-            # including negative IDs (forex pairs).
-            normalized = []
-            for inst in instruments:
-                inst_id = inst.get("instrumentId") or inst.get("instrumentID") or inst.get("InstrumentID")
-                symbol_full = (
-                    inst.get("symbolFull")
-                    or inst.get("SymbolFull")
-                    or inst.get("internalSymbolFull")
-                    or inst.get("InternalSymbolFull")
-                    or ""
-                )
-                display_name = (
-                    inst.get("instrumentDisplayName")
-                    or inst.get("InstrumentDisplayName")
-                    or inst.get("displayname")
-                    or inst.get("DisplayName")
-                    or ""
-                )
-                if inst_id is not None:
-                    normalized.append({
-                        "instrumentId": int(inst_id),
-                        "internalSymbolFull": str(symbol_full),
-                        "displayname": str(display_name),
-                    })
-
-            if not normalized:
-                continue
-
-            # Try to find an exact match for the symbol (e.g. "EUR/USD")
-            for inst in normalized:
-                full = inst["internalSymbolFull"].lower().replace("/", "")
-                display = inst["displayname"].lower()
-                if symbol_lower in full or symbol_lower in display or "eurusd" in full:
-                    return inst["instrumentId"]
-
-            # If we found instruments but no exact match, keep the first one
-            # as a fallback for this query attempt.
-            logger.warning("No exact match for %s in query '%s', using first result: %s",
-                           symbol, query, normalized[0])
-            return normalized[0]["instrumentId"]
-        except Exception as e:
-            logger.warning("Search query '%s' failed for %s: %s", query, symbol, e)
-            continue
-
-    logger.error("Failed to resolve instrument ID for %s after all search attempts", symbol)
-    return None
-
-
 def _parse_timestamp(ts: Optional[str]) -> Optional[str]:
     """Normalize a candle timestamp to an ISO-8601 string if possible."""
     if not ts:
@@ -156,24 +77,56 @@ def _parse_timestamp(ts: Optional[str]) -> Optional[str]:
     return ts
 
 
-@app.get("/chart/eurusd")
-async def chart_eurusd(
+def _get_engine_state() -> dict[str, Any]:
+    """
+    Gather the deterministic state of the trading engine for observability.
+
+    This lets the chart (and the UI) show the engine's accumulated state
+    since it started running: whether it is running, when it started, how
+    many cycles it has completed, the open positions and the last signal
+    that was evaluated.
+    """
+    started_at = persistence.load_bot_state("engine_started_at")
+    last_evaluation: Optional[dict[str, Any]] = None
+
+    # Walk the cycle history (most recent first) to find the last evaluation
+    # that produced a signal.
+    for cycle in scheduler.cycle_history:
+        evaluations = cycle.get("evaluations") or []
+        if evaluations:
+            last_evaluation = evaluations[0]
+            break
+
+    return {
+        "running": scheduler.is_running,
+        "started_at": started_at,
+        "cycle_count": scheduler.cycle_count,
+        "last_run": scheduler.last_run.isoformat() if scheduler.last_run else None,
+        "next_run": scheduler.next_run.isoformat() if scheduler.next_run else None,
+        "open_positions": engine.open_positions,
+        "last_evaluation": last_evaluation,
+    }
+
+
+@app.get("/chart/{symbol:path}")
+async def chart_data(
+    symbol: str,
     userId: str,
     interval: str = "5m",
     count: int = 300,
 ) -> dict[str, Any]:
     """
-    Return EUR/USD chart data for the Strategy Chart dashboard.
+    Return chart data for any symbol (e.g. EUR/USD, BTC, ETH) for the
+    Strategy Chart dashboard.
 
     Includes:
     - Historical candles (OHLC + timestamp)
     - MA9 and MA200 series
     - Current bid/ask (last price)
+    - Engine state (running, started_at, open positions, last evaluation)
     """
-    symbol = "EUR/USD"
-
-    # 1. Resolve instrument ID
-    instrument_id = await _resolve_symbol_instrument_id(userId, symbol)
+    # 1. Resolve instrument ID (shared resolver with alias map + cached catalogue)
+    instrument_id = await symbol_resolver.resolve(userId, symbol)
     if instrument_id is None:
         raise HTTPException(status_code=404, detail=f"Cannot resolve symbol {symbol}")
 
@@ -250,6 +203,7 @@ async def chart_eurusd(
             "ask": last_ask,
         },
         "timestamp": datetime.now(timezone.utc).isoformat(),
+        "engine": _get_engine_state(),
     }
 
 
@@ -261,10 +215,13 @@ async def start_bot() -> dict[str, object]:
     """Start the automated trading scheduler."""
     try:
         await scheduler.start()
+        now_iso = datetime.now(timezone.utc).isoformat()
         persistence.save_bot_state("running", True)
+        persistence.save_bot_state("engine_started_at", now_iso)
         return {
             "status": "started",
             "interval_seconds": scheduler.interval_seconds,
+            "started_at": now_iso,
         }
     except RuntimeError as e:
         raise HTTPException(status_code=400, detail=str(e))

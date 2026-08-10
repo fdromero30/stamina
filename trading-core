@@ -1,0 +1,163 @@
+"""
+Tests for the SymbolResolver (symbol → eToro instrument ID mapping).
+
+Uses a fake EtoroHttpClient so no network calls are needed.
+"""
+
+import sys
+import os
+from typing import Any, Optional
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+
+from app.integrations.symbol_resolver import (
+    SymbolResolver,
+    SYMBOL_ALIASES,
+    _normalize_symbol,
+    _strip_exchange_suffix,
+)
+
+
+class FakeEtoroClient:
+    """Minimal fake of EtoroHttpClient with a small in-memory instrument set."""
+
+    def __init__(self, instruments: list[dict[str, Any]]) -> None:
+        self._instruments = instruments
+
+    async def search_instruments(
+        self, user_id: str, query: str, fields: str = ""
+    ) -> dict[str, Any]:
+        return {"instrumentDisplayDatas": self._instruments}
+
+
+def _small_catalogue() -> list[dict[str, Any]]:
+    """A small catalogue similar to the real eToro response (subset)."""
+    return [
+        {"instrumentID": 1, "symbolFull": "EURUSD", "instrumentDisplayName": "EUR/USD"},
+        {"instrumentID": 2, "symbolFull": "GBPUSD", "instrumentDisplayName": "GBP/USD"},
+        {"instrumentID": 100000, "symbolFull": "BTC", "instrumentDisplayName": "Bitcoin"},
+        {"instrumentID": 100001, "symbolFull": "ETH", "instrumentDisplayName": "Ethereum"},
+        {"instrumentID": 100017, "symbolFull": "NEO", "instrumentDisplayName": "Neo"},
+        {"instrumentID": 100109, "symbolFull": "BTCEUR", "instrumentDisplayName": "Bitcoin/Euro"},
+        {"instrumentID": 100122, "symbolFull": "BTCJPY", "instrumentDisplayName": "Bitcoin / Japanese Yen"},
+    ]
+
+
+def test_normalize_symbol():
+    assert _normalize_symbol("btc/usd") == "BTCUSD"
+    assert _normalize_symbol("EUR/USD") == "EURUSD"
+    assert _normalize_symbol(" eth- usd ") == "ETHUSD"
+    print("  ✓ _normalize_symbol: correct")
+
+
+def test_strip_exchange_suffix():
+    assert _strip_exchange_suffix("BTCUSDT") == "BTC"
+    assert _strip_exchange_suffix("ETHUSDC") == "ETH"
+    assert _strip_exchange_suffix("SOLPERP") == "SOL"
+    assert _strip_exchange_suffix("BTC") == "BTC"
+    print("  ✓ _strip_exchange_suffix: correct")
+
+
+def test_alias_map_has_common_symbols():
+    assert SYMBOL_ALIASES["BTC/USD"] == "BTC"
+    assert SYMBOL_ALIASES["BTCUSDT"] == "BTC"
+    assert SYMBOL_ALIASES["ETHUSDT"] == "ETH"
+    assert SYMBOL_ALIASES["EUR/USD"] == "EURUSD"
+    assert SYMBOL_ALIASES["GOLD"] == "XAUUSD"
+    assert SYMBOL_ALIASES["AAPL"] == "AAPL"
+    print("  ✓ alias map: common symbols present")
+
+
+async def test_resolve_aliases():
+    resolver = SymbolResolver(FakeEtoroClient(_small_catalogue()))
+
+    # BTC aliases all resolve to id 100000
+    for sym in ("BTC", "BTCUSD", "BTC/USD", "BTCUSDT", "XBT"):
+        inst = await resolver.resolve("user-1", sym)
+        assert inst == 100000, f"{sym} -> {inst} (expected 100000)"
+
+    # ETH aliases resolve to id 100001
+    for sym in ("ETH", "ETHUSD", "ETH/USD", "ETHUSDT"):
+        inst = await resolver.resolve("user-1", sym)
+        assert inst == 100001, f"{sym} -> {inst} (expected 100001)"
+
+    # EUR/USD resolves to 1
+    inst = await resolver.resolve("user-1", "EUR/USD")
+    assert inst == 1, f"EUR/USD -> {inst} (expected 1)"
+
+    # AAPL not in small catalogue → None (real catalogue would have it)
+    inst = await resolver.resolve("user-1", "AAPL")
+    assert inst is None, f"AAPL -> {inst} (expected None in tiny catalogue)"
+
+    print("  ✓ resolve aliases: BTC/ETH/EUR/USD map correctly")
+
+
+async def test_resolve_heuristic_and_exact():
+    resolver = SymbolResolver(FakeEtoroClient(_small_catalogue()))
+
+    # Heuristic: BTCUSDT not in alias map (already stripped by alias), but
+    # _strip_exchange_suffix -> BTC -> catalogue match
+    inst = await resolver.resolve("user-1", "BTCUSDT")
+    assert inst == 100000, f"BTCUSDT -> {inst} (expected 100000)"
+
+    # Exact match through catalogue for BTCEUR (present in catalogue)
+    inst = await resolver.resolve("user-1", "BTCEUR")
+    assert inst == 100109, f"BTCEUR -> {inst} (expected 100109)"
+
+    # Unknown symbol → None
+    inst = await resolver.resolve("user-1", "XYZ123")
+    assert inst is None, f"XYZ123 -> {inst} (expected None)"
+
+    print("  ✓ heuristic + exact catalogue matching works")
+
+
+async def test_cache_reused():
+    client = FakeEtoroClient(_small_catalogue())
+    resolver = SymbolResolver(client)
+
+    await resolver.resolve("user-1", "BTC")
+    # Second call should hit the cache (no extra network call)
+    await resolver.resolve("user-1", "ETH")
+
+    # We can't easily count calls without instrumentation, but the cache path
+    # should return the same results consistently.
+    inst = await resolver.resolve("user-1", "BTC")
+    assert inst == 100000
+    print("  ✓ cache: repeated resolves return consistent results")
+
+
+if __name__ == "__main__":
+    import asyncio
+
+    print("=" * 60)
+    print("  SymbolResolver - Test Suite")
+    print("=" * 60)
+    print()
+
+    print("[1/6] Testing normalization...")
+    test_normalize_symbol()
+    print()
+
+    print("[2/6] Testing exchange-suffix stripping...")
+    test_strip_exchange_suffix()
+    print()
+
+    print("[3/6] Testing alias map...")
+    test_alias_map_has_common_symbols()
+    print()
+
+    print("[4/6] Testing alias resolution...")
+    asyncio.run(test_resolve_aliases())
+    print()
+
+    print("[5/6] Testing heuristic + exact matching...")
+    asyncio.run(test_resolve_heuristic_and_exact())
+    print()
+
+    print("[6/6] Testing cache consistency...")
+    asyncio.run(test_cache_reused())
+    print()
+
+    print("=" * 60)
+    print("  All symbol resolver tests completed!")
+    print("=" * 60)

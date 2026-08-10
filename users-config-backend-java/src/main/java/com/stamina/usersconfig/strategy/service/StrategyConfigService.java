@@ -40,6 +40,7 @@ public class StrategyConfigService {
         this.mlStrategyRepository = mlStrategyRepository;
     }
 
+    @Transactional(readOnly = true)
     public List<StrategyResponse> listAll() {
         return strategyRepository.findAll()
             .stream()
@@ -47,6 +48,7 @@ public class StrategyConfigService {
             .toList();
     }
 
+    @Transactional(readOnly = true)
     public List<StrategyResponse> listByUserId(UUID userId) {
         return strategyRepository.findByUserId(userId)
             .stream()

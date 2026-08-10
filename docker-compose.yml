@@ -45,9 +45,12 @@ services:
       SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD}
       SERVER_PORT: 8080
       CRYPTO_MASTER_KEY: ${CRYPTO_MASTER_KEY:?Set CRYPTO_MASTER_KEY in .env (openssl rand -hex 32)}
+      # Credentials (x-api-key / x-user-key) are resolved per-user from the
+      # encrypted api_keys table — never hardcoded here.
       ETORO_API_BASE_URL: ${ETORO_API_BASE_URL:-https://public-api.etoro.com/api/v1}
-      ETORO_API_KEY: ${ETORO_API_KEY:-replace_me}
-      ETORO_ACCOUNT_ID: ${ETORO_ACCOUNT_ID:-replace_me}
+      # Mocks are DISABLED by default. Enable explicitly with ETORO_MOCK=true
+      # only for local development without a real eToro account.
+      ETORO_MOCK: ${ETORO_MOCK:-false}
       # CORS: production frontend origin(s) allowed
       CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-}
       SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE:-prod}
