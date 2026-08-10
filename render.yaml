@@ -1,59 +1,69 @@
+# Render Blueprint — render.yaml
+# El repo de GitHub es https://github.com/fdromero30/stamina
+# El proyecto real está en la subcarpeta `stamina/` del repo.
+#
+# Importante: cada rootDir debe apuntar a la carpeta que CONTIENE el Dockerfile.
+
+databases:
+  - name: stamina-db
+    plan: free
+
 services:
-  # 1. EL BACKEND DE JAVA
-  #   IMPORTANTE: Render asigna una URL pública a cada servicio (ej:
-  #   https://users-config-backend.onrender.com). El trading-core y el frontend
-  #   deben apuntar a esa URL pública, NO a "users-config-backend:8080"
-  #   (eso solo funciona en docker-compose con red interna).
+  # ── 1. Backend Java (Spring Boot) ────────────────────────────────
   - type: web
     name: users-config-backend
     env: docker
-    # El proyecto vive en la subcarpeta `stamina/` del repo
-    rootDir: stamina
-    dockerContext: users-config-backend-java
-    dockerfilePath: Dockerfile
     plan: free
+    rootDir: stamina/users-config-backend-java
+    dockerfilePath: Dockerfile
     healthCheckPath: /health
-    servicePort: 8080
     envVars:
       - key: SPRING_DATASOURCE_URL
-        sync: false
+        fromDatabase:
+          name: stamina-db
+          property: connectionString
+      - key: SPRING_DATASOURCE_USERNAME
+        fromDatabase:
+          name: stamina-db
+          property: user
+      - key: SPRING_DATASOURCE_PASSWORD
+        fromDatabase:
+          name: stamina-db
+          property: password
       - key: SERVER_PORT
         value: 8080
       - key: SPRING_PROFILES_ACTIVE
         value: prod
       - key: CRYPTO_MASTER_KEY
-        sync: false
+        generateValue: true
+      - key: ETORO_MOCK
+        value: "false"
 
-  # 2. EL CORE DE PYTHON
+  # ── 2. Trading Core (Python/FastAPI) ─────────────────────────────
   - type: web
     name: trading-core
     env: docker
-    rootDir: stamina
-    dockerContext: trading-core-python
-    dockerfilePath: Dockerfile
     plan: free
+    rootDir: stamina/trading-core-python
+    dockerfilePath: Dockerfile
     healthCheckPath: /health
-    servicePort: 8000
     envVars:
-      # Reemplaza por la URL pública que Render asigne al servicio
-      # users-config-backend (ej: https://users-config-backend.onrender.com)
+      # Reemplaza el dominio onrender cuando Render te asigne la URL real
       - key: USERS_CONFIG_API_URL
         value: https://users-config-backend.onrender.com
       - key: BOT_API_TOKEN
-        sync: false
+        generateValue: true
 
-  # 3. EL FRONTEND DE REACT
+  # ── 3. Frontend (React + Nginx) ──────────────────────────────────
   - type: web
     name: stamina-frontend
     env: docker
-    rootDir: stamina
-    dockerContext: frontend-react
-    dockerfilePath: Dockerfile
     plan: free
+    rootDir: stamina/frontend-react
+    dockerfilePath: Dockerfile
     healthCheckPath: /
-    servicePort: 80
     envVars:
-      # Reemplaza por las URL públicas que Render asigne a los backends
+      # Reemplaza los dominios onrender cuando Render te asigne las URLs reales
       - key: USERS_CONFIG_API_URL
         value: https://users-config-backend.onrender.com
       - key: TRADING_CORE_API_URL
