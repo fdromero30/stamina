@@ -40,8 +40,8 @@ services:
       context: ./users-config-backend-java
     restart: unless-stopped
     environment:
-      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-stamina}
-      SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER:-stamina}
+      SPRING_DATASOURCE_URL: jdbc:postgresql://db.ifbrxvkmeiburqagskjs.supabase.co:5432/${POSTGRES_DB}?user=${POSTGRES_USER}&password=${POSTGRES_PASSWORD}
+      SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER}
       SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD}
       SERVER_PORT: 8080
       CRYPTO_MASTER_KEY: ${CRYPTO_MASTER_KEY:?Set CRYPTO_MASTER_KEY in .env (openssl rand -hex 32)}

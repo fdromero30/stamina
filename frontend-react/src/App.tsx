@@ -8,9 +8,56 @@ import { LandingPage } from "./pages/LandingPage";
 import { pathFromRoute, routeFromPath, type AppRoute } from "./routing/routes";
 import type { AuthMode, Session } from "./types";
 
+// ── Session persistence (12 hours) ─────────────────────────────────────
+const SESSION_STORAGE_KEY = "stamina_session";
+const SESSION_TTL_MS = 12 * 60 * 60 * 1000; // 12 hours
+
+type StoredSession = {
+  user: Session;
+  expiresAt: number;
+};
+
+function loadStoredSession(): Session | null {
+  try {
+    const raw = localStorage.getItem(SESSION_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as StoredSession;
+    if (!parsed?.user || !parsed?.expiresAt) return null;
+    if (Date.now() > parsed.expiresAt) {
+      localStorage.removeItem(SESSION_STORAGE_KEY);
+      return null;
+    }
+    return parsed.user;
+  } catch {
+    localStorage.removeItem(SESSION_STORAGE_KEY);
+    return null;
+  }
+}
+
+function saveStoredSession(user: Session) {
+  try {
+    const stored: StoredSession = {
+      user,
+      expiresAt: Date.now() + SESSION_TTL_MS,
+    };
+    localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(stored));
+  } catch {
+    // ignore (private mode, etc.)
+  }
+}
+
+function clearStoredSession() {
+  try {
+    localStorage.removeItem(SESSION_STORAGE_KEY);
+  } catch {
+    // ignore
+  }
+}
+
 export function App() {
   const [route, setRoute] = useState<AppRoute>(() => routeFromPath(window.location.pathname));
-  const [session, setSession] = useState<Session | null>(null);
+  // Restore session from localStorage so F5 does not log the user out.
+  const [session, setSession] = useState<Session | null>(() => loadStoredSession());
 
   useEffect(() => {
     const handlePopState = () => setRoute(routeFromPath(window.location.pathname));
@@ -35,6 +82,7 @@ export function App() {
   }, [route, session]);
 
   const openDashboard = (user: Session) => {
+    saveStoredSession(user);
     setSession(user);
     navigate("dashboard");
   };
@@ -58,6 +106,7 @@ export function App() {
           session={session}
           initialView="dashboard"
           onLogout={() => {
+            clearStoredSession();
             setSession(null);
             navigate("landing");
           }}
@@ -72,6 +121,7 @@ export function App() {
           session={session}
           initialView="dashboard"
           onLogout={() => {
+            clearStoredSession();
             setSession(null);
             navigate("landing");
           }}
@@ -86,6 +136,7 @@ export function App() {
           session={session}
           initialView="dashboard"
           onLogout={() => {
+            clearStoredSession();
             setSession(null);
             navigate("landing");
           }}
@@ -99,6 +150,7 @@ export function App() {
         session={session}
         initialView={route === "strategies" ? "strategies" : "dashboard"}
         onLogout={() => {
+          clearStoredSession();
           setSession(null);
           navigate("landing");
         }}

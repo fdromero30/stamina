@@ -164,17 +164,52 @@ export function StrategyChartPage({ session }: StrategyChartPageProps) {
   });
   const prevDataRef = useRef<ChartData | null>(null);
 
-  const [interval, setInterval] = useState("5m");
+  // ── View persistence (localStorage) ──────────────────────────────
+  const VIEW_STORAGE_KEY = "stamina_chart_view";
+  const loadView = (): { interval: string; symbol: string; chartHeight: number; chartWidth: number | null } => {
+    try {
+      const raw = localStorage.getItem(VIEW_STORAGE_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === "object") {
+          return {
+            interval: parsed.interval ?? "5m",
+            symbol: parsed.symbol ?? "EUR/USD",
+            chartHeight: parsed.chartHeight ?? 480,
+            chartWidth: parsed.chartWidth ?? null,
+          };
+        }
+      }
+    } catch {
+      // ignore
+    }
+    return { interval: "5m", symbol: "EUR/USD", chartHeight: 480, chartWidth: null };
+  };
+  const initialView = loadView();
+
+  const [interval, setInterval] = useState(initialView.interval);
   // Selected symbol for the chart. Defaults to EUR/USD but can be changed
   // independently of the symbol the trading engine is running on.
-  const [symbol, setSymbol] = useState("EUR/USD");
-  const [symbolInput, setSymbolInput] = useState("EUR/USD");
+  const [symbol, setSymbol] = useState(initialView.symbol);
+  const [symbolInput, setSymbolInput] = useState(initialView.symbol);
   const [showSymbolDropdown, setShowSymbolDropdown] = useState(false);
   // Resizable chart height (px). Default matches the previous fixed height.
-  const [chartHeight, setChartHeight] = useState(480);
+  const [chartHeight, setChartHeight] = useState(initialView.chartHeight);
   // Resizable chart width (px). null = full width (100%).
-  const [chartWidth, setChartWidth] = useState<number | null>(null);
-  const chartWidthRef = useRef<number | null>(null);
+  const [chartWidth, setChartWidth] = useState<number | null>(initialView.chartWidth);
+  const chartWidthRef = useRef<number | null>(initialView.chartWidth);
+
+  // Persist view settings whenever they change (F5 keeps the same view)
+  useEffect(() => {
+    try {
+      localStorage.setItem(
+        VIEW_STORAGE_KEY,
+        JSON.stringify({ interval, symbol, chartHeight, chartWidth })
+      );
+    } catch {
+      // ignore
+    }
+  }, [interval, symbol, chartHeight, chartWidth]);
 
   // Preset symbols available in the combobox dropdown.
   const presetSymbols = ["EUR/USD", "BTC", "ETH", "GBP/USD", "XAU/USD", "AAPL", "TSLA"];
@@ -219,7 +254,11 @@ export function StrategyChartPage({ session }: StrategyChartPageProps) {
   const [stopBot, stopResult] = useStopBotMutation();
   const [triggerCycle, cycleResult] = useTriggerCycleMutation();
 
-  const isRunning = status?.running ?? false;
+  // Bot running state: use the live status endpoint, but fall back to the
+  // chart's engine state while the status poll is still loading (this avoids
+  // a frozen "—" countdown right after returning to the page).
+  const engineRunningFromChart = chartData?.engine?.running ?? false;
+  const isRunning = (status?.running ?? false) || engineRunningFromChart;
 
   // ── Countdown to next cycle ──────────────────────────────────────
   const [nowTick, setNowTick] = useState(() => Date.now());

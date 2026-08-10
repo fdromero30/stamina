@@ -1,0 +1,43 @@
+services:
+  # 1. EL BACKEND DE JAVA (Servicio Web Público)
+  - type: web
+    name: users-config-backend
+    env: docker
+    dockerContext: ./users-config-backend-java
+    dockerfilePath: ./Dockerfile
+    plan: free
+    envVars:
+      - key: SPRING_DATASOURCE_URL
+        sync: false
+      - key: SERVER_PORT
+        value: 8080
+      - key: SPRING_PROFILES_ACTIVE
+        value: prod
+      - key: CRYPTO_MASTER_KEY
+        sync: false
+
+  # 2. EL CORE DE PYTHON (Servicio Privado Interno)
+  - type: pserv
+    name: trading-core
+    env: docker
+    dockerContext: ./trading-core-python
+    dockerfilePath: ./Dockerfile
+    plan: free
+    envVars:
+      - key: USERS_CONFIG_API_URL
+        value: http://users-config-backend:8080
+      - key: BOT_API_TOKEN
+        sync: false 
+
+  # 3. EL FRONTEND DE REACT (Servicio Web Público)
+  - type: web
+    name: stamina-frontend
+    env: docker
+    dockerContext: ./frontend-react
+    dockerfilePath: ./Dockerfile
+    plan: free
+    envVars:
+      - key: USERS_CONFIG_API_URL
+        value: http://users-config-backend:8080
+      - key: TRADING_CORE_API_URL
+        value: http://trading-core:8000
