@@ -15,7 +15,13 @@ TickHandler = Callable[[], Awaitable[dict]]
 
 class TradingScheduler:
     """
-    A simple async scheduler that runs the trading engine at a fixed interval.
+    An async scheduler aligned to closed candle boundaries.
+
+    Instead of running immediately when started (which could operate on an
+    incomplete candle), the loop first sleeps until the next multiple of the
+    configured interval (e.g. every 5 minutes) plus a small margin, then runs
+    the trading cycle on the just-closed candle.  After each cycle it realigns
+    to the next boundary so the schedule stays locked to candle openings.
 
     Can be started, stopped, and queried for status.
     Keeps an in-memory history of recent cycles for observability.
@@ -113,24 +119,42 @@ class TradingScheduler:
         return result
 
     async def _run_loop(self) -> None:
-        """Main scheduler loop."""
+        """Main scheduler loop, aligned to closed candle boundaries.
+
+        On startup (regardless of the current time), the loop first sleeps
+        until the next multiple of ``interval_seconds`` (e.g. 10:55:00 for a
+        5m interval) plus a small margin (2s by default) so the candle that
+        just closed is fully available.  After each cycle it realigns to the
+        next boundary, keeping the schedule locked to candle openings.
+        """
         while self._running:
+            # ── Align: sleep until the next closed-candle boundary ──
             now = datetime.now(timezone.utc)
+            sleep_seconds = self._seconds_until_next_window(now, self._interval)
+
             self._next_run = datetime.fromtimestamp(
-                now.timestamp() + self._interval, tz=timezone.utc
+                now.timestamp() + sleep_seconds, tz=timezone.utc
             )
+            self._persist_state()
 
-            # Duration to sleep before the next cycle.  Normally this is the
-            # configured interval, but when the engine reports it is outside
-            # trading hours (e.g. weekend), we sleep until the next window
-            # opens instead of waking up every interval.
-            sleep_seconds = self._interval
+            logger.info(
+                "Aligned: sleeping %.1fs until next closed candle boundary (%s)",
+                sleep_seconds,
+                self._next_run.strftime("%H:%M:%S"),
+            )
+            await self._sleep_until_next(sleep_seconds)
+            if not self._running:
+                break
 
+            # ── Run one cycle on the just-closed candle ──
             try:
                 result = await self._run_single_cycle(source="auto")
                 self._cycle_count += 1
                 self._last_run = datetime.now(timezone.utc)
 
+                # If the engine reports it is outside trading hours (e.g.
+                # weekend), sleep until the next trading window opens instead
+                # of staying aligned to candle boundaries in a closed market.
                 next_in = result.get("next_run_seconds")
                 if result.get("skipped") and isinstance(next_in, (int, float)) and next_in > 0:
                     sleep_seconds = int(next_in)
@@ -138,20 +162,38 @@ class TradingScheduler:
                         "Cycle skipped; sleeping %.1f hours until next trading window",
                         sleep_seconds / 3600,
                     )
+                    self._next_run = datetime.fromtimestamp(
+                        datetime.now(timezone.utc).timestamp() + sleep_seconds,
+                        tz=timezone.utc,
+                    )
+                    self._persist_state()
+                    await self._sleep_until_next(sleep_seconds)
+                    continue
                 self._persist_state()
             except asyncio.CancelledError:
                 raise
             except Exception:
                 logger.exception("Error in trading cycle")
 
-            self._next_run = datetime.fromtimestamp(
-                datetime.now(timezone.utc).timestamp() + sleep_seconds,
-                tz=timezone.utc,
-            )
-            self._persist_state()
+    @staticmethod
+    def _seconds_until_next_window(
+        now: datetime,
+        interval_seconds: int,
+        margin_seconds: int = 2,
+    ) -> int:
+        """Seconds until the next aligned boundary (closed candle) + margin.
 
-            # Wait for the next interval (or until stopped)
-            await self._sleep_until_next(sleep_seconds)
+        Example (interval=300, margin=2):
+          now=10:53:40 → next boundary 10:55:00 → returns 142 (10:55:02)
+          now=10:55:01 → next boundary 11:00:00 → returns 301 (11:00:02)
+
+        The margin ensures the candle that just closed is fully available in
+        the eToro feed before we consume it.
+        """
+        epoch = int(now.timestamp())
+        next_boundary = ((epoch // interval_seconds) + 1) * interval_seconds
+        diff = next_boundary + margin_seconds - epoch
+        return max(diff, 1)
 
     async def _run_single_cycle(self, source: str) -> dict:
         """Execute one trading cycle and record it in the history."""
