@@ -1,6 +1,6 @@
 # Render Blueprint — render.yaml
 # El repo de GitHub es https://github.com/fdromero30/stamina
-# El proyecto real está en la subcarpeta `stamina/` del repo.
+# El proyecto vive EN LA RAÍZ del repo (los Dockerfiles están a nivel raíz).
 #
 # Base de datos: SUPABASE (no Render-managed).
 # Las credenciales de Supabase (SPRING_DATASOURCE_URL / USERNAME / PASSWORD)
@@ -13,7 +13,7 @@ services:
     name: users-config-backend
     env: docker
     plan: free
-    rootDir: stamina/users-config-backend-java
+    rootDir: users-config-backend-java
     dockerfilePath: Dockerfile
     healthCheckPath: /health
     envVars:
@@ -42,7 +42,7 @@ services:
     name: trading-core
     env: docker
     plan: free
-    rootDir: stamina/trading-core-python
+    rootDir: trading-core-python
     dockerfilePath: Dockerfile
     healthCheckPath: /health
     envVars:
@@ -57,7 +57,7 @@ services:
     name: stamina-frontend
     env: docker
     plan: free
-    rootDir: stamina/frontend-react
+    rootDir: frontend-react
     dockerfilePath: Dockerfile
     healthCheckPath: /
     envVars:
