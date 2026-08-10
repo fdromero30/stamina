@@ -2,11 +2,10 @@
 # El repo de GitHub es https://github.com/fdromero30/stamina
 # El proyecto real está en la subcarpeta `stamina/` del repo.
 #
-# Importante: cada rootDir debe apuntar a la carpeta que CONTIENE el Dockerfile.
-
-databases:
-  - name: stamina-db
-    plan: free
+# Base de datos: SUPABASE (no Render-managed).
+# Las credenciales de Supabase (SPRING_DATASOURCE_URL / USERNAME / PASSWORD)
+# están con `sync: false` → se configuran en el dashboard de Render, nunca
+# en el repo.
 
 services:
   # ── 1. Backend Java (Spring Boot) ────────────────────────────────
@@ -18,18 +17,17 @@ services:
     dockerfilePath: Dockerfile
     healthCheckPath: /health
     envVars:
+      # ── Supabase (PostgreSQL) ─────────────────────────────────
+      # Se completan desde el panel de Render > Environment:
+      #   SPRING_DATASOURCE_URL      = postgresql://postgres:[PASS]@db.[REF].supabase.co:5432/postgres
+      #   SPRING_DATASOURCE_USERNAME = postgres
+      #   SPRING_DATASOURCE_PASSWORD = [password de Supabase]
       - key: SPRING_DATASOURCE_URL
-        fromDatabase:
-          name: stamina-db
-          property: connectionString
+        sync: false
       - key: SPRING_DATASOURCE_USERNAME
-        fromDatabase:
-          name: stamina-db
-          property: user
+        sync: false
       - key: SPRING_DATASOURCE_PASSWORD
-        fromDatabase:
-          name: stamina-db
-          property: password
+        sync: false
       - key: SERVER_PORT
         value: 8080
       - key: SPRING_PROFILES_ACTIVE
