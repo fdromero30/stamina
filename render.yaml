@@ -3,7 +3,7 @@ services:
   - type: web
     name: users-config-backend
     env: docker
-    dockerContext: ./users-config-backend-java
+    dockerContext: users-config-backend-java
     dockerfilePath: Dockerfile
     plan: free
     envVars:
@@ -20,7 +20,7 @@ services:
   - type: web
     name: trading-core
     env: docker
-    dockerContext: ./trading-core-python
+    dockerContext: trading-core-python
     dockerfilePath: Dockerfile
     plan: free
     envVars:
@@ -33,7 +33,7 @@ services:
   - type: web
     name: stamina-frontend
     env: docker
-    dockerContext: ./frontend-react
+    dockerContext: frontend-react
     dockerfilePath: Dockerfile
     plan: free
     envVars:
