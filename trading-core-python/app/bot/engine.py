@@ -14,6 +14,9 @@ from app.bot.signals import (
     MarketData,
     evaluate_ma_strategy,
     calculate_breakeven_stop_loss,
+    calculate_take_profit,
+    find_swing_low,
+    find_swing_high,
 )
 from app.integrations.market_data_client import MarketDataClient
 from app.integrations.orders_client import EtoroHttpClient
@@ -142,7 +145,10 @@ class TradingBotEngine:
                     user_strategies[uid] = []
                 user_strategies[uid].append(s)
 
-            # 3. Process each user's strategies
+            # 3. Reconcile open positions with eToro before processing
+            await self.sync_positions_from_etoro(enabled)
+
+            # 4. Process each user's strategies
             for user_id, user_strats in user_strategies.items():
                 await self._process_user_strategies(
                     user_id=user_id,
@@ -150,7 +156,7 @@ class TradingBotEngine:
                     results=results,
                 )
 
-            # 4. Check open positions for breakeven adjustments
+            # 5. Check open positions for breakeven adjustments
             await self._check_breakeven_adjustments(results)
 
         except Exception:
@@ -164,6 +170,171 @@ class TradingBotEngine:
             len(results["adjustments"]),
         )
         return results
+
+    # ── Internal: Position Reconciliation with eToro ─────────────────────
+
+    async def sync_positions_from_etoro(
+        self,
+        strategies: list[StrategyConfigDTO],
+        demo: bool = True,
+    ) -> int:
+        """
+        Reconcile the bot's local open positions with the real open positions
+        in eToro for the enabled strategies.
+
+        - Brings in positions that exist in eToro but not locally (e.g. after a
+          crash/restart).
+        - Removes local positions that eToro has already closed.
+        - Recomputes SL/TP using the bot's own logic (swing + R:R 2:1) on the
+          current candle data.
+        - Only positions whose instrument matches a symbol in an enabled
+          strategy are tracked (manual positions on other symbols are ignored).
+
+        Returns the number of positions imported/updated.
+        """
+        logger.info("Syncing open positions from eToro...")
+
+        # Map user_id -> set of instrument_ids the bot watches
+        user_instruments: dict[str, set[int]] = {}
+        for s in strategies:
+            try:
+                inst = await self._resolve_instrument_id(s.user_id, s.symbol)
+                if inst is not None:
+                    user_instruments.setdefault(s.user_id, set()).add(inst)
+            except Exception as e:
+                logger.warning("Failed to resolve %s for sync: %s", s.symbol, e)
+
+        imported = 0
+        for user_id, inst_ids in user_instruments.items():
+            # Fetch open positions from eToro (Java backend filters isSettled)
+            try:
+                etoro_positions = await self._etoro_http_client.get_open_positions(
+                    user_id, demo=demo
+                )
+            except Exception as e:
+                logger.warning("Failed to fetch open positions for %s: %s", user_id, e)
+                continue
+
+            # Keep only positions on instruments the bot watches
+            relevant = [
+                p for p in etoro_positions
+                if p.get("instrumentID") in inst_ids
+            ]
+            etoro_by_id = {
+                int(p["positionID"]): p
+                for p in relevant
+                if p.get("positionID") is not None
+            }
+
+            current = self._open_positions.get(user_id, [])
+            current_by_id = {int(p["position_id"]): p for p in current}
+
+            # Local positions no longer open in eToro → remove
+            removed_ids = [
+                pid for pid in current_by_id if pid not in etoro_by_id
+            ]
+            if removed_ids:
+                logger.info(
+                    "Removing %d position(s) closed in eToro for user %s: %s",
+                    len(removed_ids), user_id, removed_ids,
+                )
+                self._open_positions[user_id] = [
+                    p for p in current if int(p.get("position_id")) not in removed_ids
+                ]
+
+            # Bring in new positions that eToro has but we don't
+            kept = self._open_positions.get(user_id, [])
+            known_ids = {int(p["position_id"]) for p in kept}
+
+            for pid, ep in etoro_by_id.items():
+                if pid in known_ids:
+                    continue
+
+                entry = float(ep.get("openRate") or 0)
+                if entry <= 0:
+                    continue
+
+                is_buy = bool(ep.get("isBuy", False))
+                instrument_id = int(ep.get("instrumentID"))
+                opened_at = ep.get("openDateTime") or datetime.now(timezone.utc).isoformat()
+
+                # Recalculate SL/TP with the bot's logic from current candles
+                stop_loss, take_profit = await self._recalculate_sl_tp(
+                    user_id, instrument_id, entry, is_buy
+                )
+
+                # Fallback to eToro values if recalc fails
+                if stop_loss is None:
+                    sl = ep.get("stopLossRate")
+                    stop_loss = float(sl) if sl is not None and float(sl) > 0 else None
+                if take_profit is None:
+                    tp = ep.get("takeProfitRate")
+                    no_tp = ep.get("isNoTakeProfit", False)
+                    take_profit = float(tp) if tp is not None and not no_tp and float(tp) > 0 else None
+
+                position = {
+                    "position_id": int(pid),
+                    "entry_price": entry,
+                    "stop_loss": stop_loss,
+                    "take_profit": take_profit,
+                    "is_buy": is_buy,
+                    "breakeven_applied": False,
+                    "opened_at": opened_at,
+                    "source": "etoro_sync",
+                }
+
+                if user_id not in self._open_positions:
+                    self._open_positions[user_id] = []
+                self._open_positions[user_id].append(position)
+                persistence.save_position(user_id, position)
+                imported += 1
+                logger.info(
+                    "Imported position #%s (inst=%s, entry=%.5f) from eToro for user %s",
+                    pid, instrument_id, entry, user_id,
+                )
+
+        if imported > 0:
+            logger.info("Position reconciliation complete: %d position(s) imported", imported)
+        else:
+            logger.info("Position reconciliation complete: no new positions")
+        return imported
+
+    async def _recalculate_sl_tp(
+        self,
+        user_id: str,
+        instrument_id: int,
+        entry: float,
+        is_buy: bool,
+    ) -> tuple[Optional[float], Optional[float]]:
+        """Recompute SL (swing) and TP (2:1 risk:reward) from current candles."""
+        try:
+            candles = await self._market_data_client.get_candles(
+                user_id=user_id,
+                instrument_id=instrument_id,
+                interval=settings.default_candle_interval,
+                count=settings.default_candle_count,
+            )
+            if not candles:
+                return None, None
+
+            if is_buy:
+                sl = find_swing_low(candles, settings.swing_lookback_candles)
+            else:
+                sl = find_swing_high(candles, settings.swing_lookback_candles)
+
+            if sl is None:
+                return None, None
+            if (is_buy and sl >= entry) or (not is_buy and sl <= entry):
+                return None, None
+
+            tp = calculate_take_profit(entry, sl, 2.0, is_buy=is_buy)
+            return sl, tp
+        except Exception as e:
+            logger.warning(
+                "Failed to recalc SL/TP for user %s inst=%s: %s",
+                user_id, instrument_id, e,
+            )
+            return None, None
 
     async def evaluate_strategy(self, strategy_id: str) -> dict[str, Any]:
         """Evaluate a single strategy by ID without executing any trades."""

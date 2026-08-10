@@ -221,6 +221,33 @@ export function StrategyChartPage({ session }: StrategyChartPageProps) {
 
   const isRunning = status?.running ?? false;
 
+  // ── Countdown to next cycle ──────────────────────────────────────
+  const [nowTick, setNowTick] = useState(() => Date.now());
+  useEffect(() => {
+    // NOTE: `interval` state shadows the global setInterval, so use
+    // window.setInterval explicitly for the countdown ticker.
+    const ticker = window.setInterval(() => setNowTick(Date.now()), 1000);
+    return () => window.clearInterval(ticker);
+  }, []);
+
+  // Use backend next_run when available; otherwise compute the next 5-minute
+  // aligned boundary locally (+2s margin) so the countdown always ticks.
+  const computedNextRun = (() => {
+    const now = new Date(nowTick);
+    const intervalMs = (status?.interval_seconds ?? 300) * 1000;
+    const boundary = (Math.floor(now.getTime() / intervalMs) + 1) * intervalMs;
+    return boundary + 2000; // +2s margin for closed candle
+  })();
+
+  const nextRunTime = status?.next_run
+    ? new Date(status.next_run).getTime()
+    : isRunning
+      ? computedNextRun
+      : null;
+  const secondsRemaining = nextRunTime != null
+    ? Math.max(0, Math.floor((nextRunTime - nowTick) / 1000))
+    : null;
+
   // ── Create chart once on mount ──────────────────────────────────
   useEffect(() => {
     console.log("[Chart] mount, container:", chartContainerRef.current);
@@ -457,6 +484,10 @@ export function StrategyChartPage({ session }: StrategyChartPageProps) {
   const lastBid = chartData?.last_price?.bid ?? null;
   const lastAsk = chartData?.last_price?.ask ?? null;
   const mid = lastBid != null && lastAsk != null ? (lastBid + lastAsk) / 2 : null;
+  // Spread = difference between ask and bid, shown in % (what eToro charges).
+  const spreadPct = lastBid != null && lastAsk != null && lastBid > 0
+    ? ((lastAsk - lastBid) / lastBid) * 100
+    : null;
   const lastTimestamp = chartData?.timestamp ? new Date(chartData.timestamp).toLocaleTimeString() : "—";
 
   // ── Engine state (deterministic state for trade execution) ──────
@@ -590,6 +621,12 @@ export function StrategyChartPage({ session }: StrategyChartPageProps) {
           </strong>
         </div>
         <div className="ticker-item">
+          <span className="ticker-label">Spread</span>
+          <strong className={spreadPct != null ? "ticker-value ticker-spread" : "ticker-value ticker-muted"}>
+            {spreadPct != null ? `${spreadPct.toFixed(3)}%` : "—"}
+          </strong>
+        </div>
+        <div className="ticker-item">
           <span className="ticker-label">Updated</span>
           <strong className="ticker-value ticker-time">{lastTimestamp}</strong>
         </div>
@@ -620,6 +657,14 @@ export function StrategyChartPage({ session }: StrategyChartPageProps) {
           <strong className="ticker-value">
             {lastSignalAction}
             {lastSignalConfidence != null ? ` (${(lastSignalConfidence * 100).toFixed(0)}%)` : ""}
+          </strong>
+        </div>
+        <div className="ticker-item">
+          <span className="ticker-label">Next Cycle</span>
+          <strong className={secondsRemaining != null ? "ticker-value ticker-countdown" : "ticker-value ticker-muted"}>
+            {secondsRemaining != null
+              ? `${Math.floor(secondsRemaining / 60)}:${String(secondsRemaining % 60).padStart(2, "0")}`
+              : "—"}
           </strong>
         </div>
       </div>

@@ -9,6 +9,7 @@ import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
 
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
@@ -41,6 +42,51 @@ public class EtoroPortfolioController {
         } catch (Exception e) {
             throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR,
                     "eToro demo portfolio failed: " + e.getMessage());
+        }
+    }
+
+    /**
+     * Return only OPEN positions (isSettled=false) from the eToro portfolio.
+     * Used by the trading bot to reconcile its local open-positions state
+     * with positions that exist in eToro (e.g. after a restart/crash).
+     */
+    @GetMapping("/positions")
+    @ResponseStatus(HttpStatus.OK)
+    public Map<String, Object> openPositions(
+            @RequestParam("userId") UUID userId,
+            @RequestParam(value = "demo", defaultValue = "true") boolean demo) {
+        try {
+            Map<String, Object> portfolio = demo
+                    ? etoroClient.getDemoPortfolio(userId)
+                    : etoroClient.getPortfolio(userId);
+
+            @SuppressWarnings("unchecked")
+            Map<String, Object> clientPortfolio =
+                    (Map<String, Object>) portfolio.getOrDefault("clientPortfolio", portfolio);
+            List<Map<String, Object>> positions = new java.util.ArrayList<>();
+
+            Object rawPositions = clientPortfolio.get("positions");
+            if (rawPositions instanceof List<?> rawList) {
+                for (Object item : rawList) {
+                    if (item instanceof Map<?, ?> posMap) {
+                        @SuppressWarnings("unchecked")
+                        Map<String, Object> pos = (Map<String, Object>) posMap;
+                        // Only active positions matter for monitoring
+                        if (Boolean.FALSE.equals(pos.get("isSettled"))) {
+                            positions.add(pos);
+                        }
+                    }
+                }
+            }
+
+            return Map.of(
+                    "positions", positions,
+                    "count", positions.size(),
+                    "demo", demo
+            );
+        } catch (Exception e) {
+            throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR,
+                    "eToro open positions failed: " + e.getMessage());
         }
     }
 

@@ -248,6 +248,24 @@ class EtoroHttpClient:
             resp.raise_for_status()
             return resp.json()
 
+    async def get_open_positions(
+        self, user_id: str, demo: bool = True
+    ) -> list[dict[str, Any]]:
+        """
+        Fetch only OPEN positions (isSettled=false) from the eToro proxy.
+
+        The Java backend filters settled/closed positions so the bot can
+        reconcile its local state with what actually exists in eToro.
+        """
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.get(
+                f"{self._base_url}/etoro/portfolio/positions",
+                params={"userId": user_id, "demo": str(demo).lower()},
+            )
+            resp.raise_for_status()
+            data = resp.json()
+        return data.get("positions") or []
+
     async def get_real_pnl(self, user_id: str) -> dict[str, Any]:
         async with httpx.AsyncClient(timeout=15) as client:
             resp = await client.get(

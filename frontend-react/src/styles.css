@@ -1854,7 +1854,7 @@ h3 {
   gap: 12px;
   max-width: 50%;
   min-width: 0;
-  overflow: hidden;
+  overflow: visible;
   padding: 0 8px;
   width: 50%;
 }
@@ -1874,10 +1874,16 @@ h3 {
   border-radius: 8px;
   display: flex;
   flex-direction: column;
-  height: 100%;
-  min-height: 480px;
+  flex-shrink: 0;
+  height: 480px;
+  min-height: 220px;
   overflow: hidden;
   width: 100%;
+  transition: height 80ms ease-out;
+}
+
+.cycle-log-panel:active {
+  transition: none;
 }
 
 .cycle-log-header {
@@ -1900,12 +1906,46 @@ h3 {
 
 .cycle-log-scroll {
   flex: 1;
+  min-height: 0;
   overflow-y: auto;
   padding: 10px;
 }
 
 .cycle-log-scroll .cycle-history {
   gap: 8px;
+}
+
+/* Drag handle para redimensionar la altura del Cycle Log */
+.cycle-log-resize-handle {
+  align-items: center;
+  background: #f8faf9;
+  border-top: 1px solid #e0e8e4;
+  color: #8a9e98;
+  cursor: ns-resize;
+  display: flex;
+  font-size: 12px;
+  height: 18px;
+  justify-content: center;
+  letter-spacing: 2px;
+  user-select: none;
+}
+
+.cycle-log-resize-handle:hover,
+.cycle-log-resize-handle:active {
+  background: #eef4f1;
+  color: #1f7a57;
+}
+
+.cycle-log-resize-handle span {
+  line-height: 1;
+  transform: rotate(90deg);
+}
+
+/* ── Open Positions table: internal scroll ── */
+.open-positions-scroll {
+  max-height: 260px;
+  overflow-y: auto;
+  width: 100%;
 }
 
 /* ── Open Positions section (full width, below split) ── */
@@ -1946,4 +1986,20 @@ h3 {
 }
 .ticker-muted {
   color: #9aa9a7;
+}
+
+/* Countdown to next cycle */
+.ticker-countdown {
+  color: #1f7a57;
+  font-size: 15px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Spread (bid-ask difference) indicator */
+.ticker-spread {
+  color: #d97706;
+  font-size: 15px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
 }

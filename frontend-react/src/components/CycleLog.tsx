@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import {
   AlertCircle,
   CheckCircle2,
@@ -214,44 +214,46 @@ export function OpenPositionsList({ positions }: { positions: Record<string, Ope
   }
 
   return (
-    <div className="open-positions">
-      {userIds.map((userId) => (
-        <div key={userId} className="open-positions-user">
-          <h4>User: {userId.slice(0, 8)}…</h4>
-          <table className="user-table">
-            <thead>
-              <tr>
-                <th>Position</th>
-                <th>Side</th>
-                <th>Entry</th>
-                <th>Stop Loss</th>
-                <th>Take Profit</th>
-                <th>Breakeven</th>
-                <th>Opened</th>
-              </tr>
-            </thead>
-            <tbody>
-              {positions[userId].map((pos) => (
-                <tr key={pos.position_id}>
-                  <td>#{pos.position_id}</td>
-                  <td>
-                    {pos.is_buy ? (
-                      <span className="signal-badge signal-buy"><TrendingUp size={12} /> BUY</span>
-                    ) : (
-                      <span className="signal-badge signal-sell"><TrendingDown size={12} /> SELL</span>
-                    )}
-                  </td>
-                  <td>{pos.entry_price}</td>
-                  <td>{pos.stop_loss ?? "—"}</td>
-                  <td>{pos.take_profit ?? "—"}</td>
-                  <td>{pos.breakeven_applied ? <CheckCircle2 size={14} color="#1f7a57" /> : "—"}</td>
-                  <td>{formatTime(pos.opened_at)}</td>
+    <div className="open-positions-scroll">
+      <div className="open-positions">
+        {userIds.map((userId) => (
+          <div key={userId} className="open-positions-user">
+            <h4>User: {userId.slice(0, 8)}…</h4>
+            <table className="user-table">
+              <thead>
+                <tr>
+                  <th>Position</th>
+                  <th>Side</th>
+                  <th>Entry</th>
+                  <th>Stop Loss</th>
+                  <th>Take Profit</th>
+                  <th>Breakeven</th>
+                  <th>Opened</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      ))}
+              </thead>
+              <tbody>
+                {positions[userId].map((pos) => (
+                  <tr key={pos.position_id}>
+                    <td>#{pos.position_id}</td>
+                    <td>
+                      {pos.is_buy ? (
+                        <span className="signal-badge signal-buy"><TrendingUp size={12} /> BUY</span>
+                      ) : (
+                        <span className="signal-badge signal-sell"><TrendingDown size={12} /> SELL</span>
+                      )}
+                    </td>
+                    <td>{pos.entry_price}</td>
+                    <td>{pos.stop_loss ?? "—"}</td>
+                    <td>{pos.take_profit ?? "—"}</td>
+                    <td>{pos.breakeven_applied ? <CheckCircle2 size={14} color="#1f7a57" /> : "—"}</td>
+                    <td>{formatTime(pos.opened_at)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
@@ -265,8 +267,34 @@ export function CycleLog() {
     pollingInterval: 5000,
   });
 
+  // Resizable height (same pattern as the chart panel)
+  const [logHeight, setLogHeight] = useState(480);
+  const panelRef = useRef<HTMLDivElement>(null);
+
+  // Drag-to-resize height (vertical)
+  const handleResizeDragStart = (e: React.MouseEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    const startY = e.clientY;
+    const startHeight = logHeight;
+    const onMouseMove = (ev: MouseEvent) => {
+      const deltaY = ev.clientY - startY;
+      const nextHeight = Math.min(900, Math.max(220, startHeight + deltaY));
+      setLogHeight(nextHeight);
+    };
+    const onMouseUp = () => {
+      window.removeEventListener("mousemove", onMouseMove);
+      window.removeEventListener("mouseup", onMouseUp);
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+    };
+    window.addEventListener("mousemove", onMouseMove);
+    window.addEventListener("mouseup", onMouseUp);
+    document.body.style.cursor = "ns-resize";
+    document.body.style.userSelect = "none";
+  };
+
   return (
-    <div className="cycle-log-panel">
+    <div className="cycle-log-panel" ref={panelRef} style={{ height: logHeight }}>
       <div className="cycle-log-header">
         <h3>Cycle Log</h3>
         <span className="cycle-log-count">{cyclesData?.cycles?.length ?? 0} cycles</span>
@@ -292,6 +320,14 @@ export function CycleLog() {
             ))}
           </div>
         )}
+      </div>
+      {/* Drag handle para redimensionar la altura */}
+      <div
+        className="cycle-log-resize-handle"
+        onMouseDown={handleResizeDragStart}
+        title="Arrastra para redimensionar la altura del log"
+      >
+        <span>⠿</span>
       </div>
     </div>
   );
