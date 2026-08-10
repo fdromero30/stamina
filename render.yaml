@@ -1,11 +1,19 @@
 services:
   # 1. EL BACKEND DE JAVA
+  #   IMPORTANTE: Render asigna una URL pública a cada servicio (ej:
+  #   https://users-config-backend.onrender.com). El trading-core y el frontend
+  #   deben apuntar a esa URL pública, NO a "users-config-backend:8080"
+  #   (eso solo funciona en docker-compose con red interna).
   - type: web
     name: users-config-backend
     env: docker
+    # El proyecto vive en la subcarpeta `stamina/` del repo
+    rootDir: stamina
     dockerContext: users-config-backend-java
     dockerfilePath: Dockerfile
     plan: free
+    healthCheckPath: /health
+    servicePort: 8080
     envVars:
       - key: SPRING_DATASOURCE_URL
         sync: false
@@ -20,12 +28,17 @@ services:
   - type: web
     name: trading-core
     env: docker
+    rootDir: stamina
     dockerContext: trading-core-python
     dockerfilePath: Dockerfile
     plan: free
+    healthCheckPath: /health
+    servicePort: 8000
     envVars:
+      # Reemplaza por la URL pública que Render asigne al servicio
+      # users-config-backend (ej: https://users-config-backend.onrender.com)
       - key: USERS_CONFIG_API_URL
-        value: http://users-config-backend:8080
+        value: https://users-config-backend.onrender.com
       - key: BOT_API_TOKEN
         sync: false
 
@@ -33,11 +46,15 @@ services:
   - type: web
     name: stamina-frontend
     env: docker
+    rootDir: stamina
     dockerContext: frontend-react
     dockerfilePath: Dockerfile
     plan: free
+    healthCheckPath: /
+    servicePort: 80
     envVars:
+      # Reemplaza por las URL públicas que Render asigne a los backends
       - key: USERS_CONFIG_API_URL
-        value: http://users-config-backend:8080
+        value: https://users-config-backend.onrender.com
       - key: TRADING_CORE_API_URL
-        value: http://trading-core:8000
+        value: https://trading-core.onrender.com
