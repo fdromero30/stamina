@@ -1,4 +1,13 @@
 # Render Blueprint — render.yaml
+# ARQUITECTURA:
+# Los 3 servicios son `type: web` (plan free). NO hay red privada
+# disponible en free tier → la comunicación entre servicios usa la
+# URL pública HTTPS + SNI (proxy_ssl_server_name on en Nginx).
+#
+#   Navegador → stamina-frontend.onrender.com
+#     /api → Nginx → https://users-config-backend.onrender.com (SNI)
+#     /trading-core → Nginx → https://trading-core.onrender.com (SNI)
+
 services:
   # ── 1. Backend Java (Spring Boot) ────────────────────────────────
   - type: web
@@ -34,9 +43,9 @@ services:
     dockerfilePath: Dockerfile
     healthCheckPath: /health
     envVars:
-      # Hostname interno de Render (sin puerto — Render resuelve el puerto)
+      # HTTPS público del backend (comunicación service-to-service)
       - key: USERS_CONFIG_API_URL
-        value: http://users-config-backend
+        value: https://users-config-backend.onrender.com
       - key: BOT_API_TOKEN
         generateValue: true
 
@@ -49,11 +58,12 @@ services:
     dockerfilePath: Dockerfile
     healthCheckPath: /
     envVars:
-      # Detectado por entrypoint.sh para template de hostname interno
+      # Detectado por entrypoint.sh para template con SNI
       - key: RENDER
         value: "true"
-      # Hostnames internos: Render resuelve el puerto automáticamente
+      # HTTPS público + SNI (proxy_ssl_server_name on en Nginx)
+      # — NO usar http:// ni hostname interno (free tier no tiene red privada)
       - key: USERS_CONFIG_API_URL
-        value: http://users-config-backend
+        value: https://users-config-backend.onrender.com
       - key: TRADING_CORE_API_URL
-        value: http://trading-core
+        value: https://trading-core.onrender.com
