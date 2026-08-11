@@ -10,6 +10,18 @@ else
   TEMPLATE=/etc/nginx/templates/nginx.local.conf
 fi
 
+# Defaults hardcodeados para los upstreams del proxy Nginx.
+# Sin estos, si Render no tiene las variables en el dashboard, Nginx usa
+# los defaults del Dockerfile (http://users-config-backend:8080) que son
+# hostnames de Docker Compose y NO existen en Render → 502.
+if [ -z "${USERS_CONFIG_API_URL:-}" ]; then
+  USERS_CONFIG_API_URL="https://users-config-backend.onrender.com"
+fi
+if [ -z "${TRADING_CORE_API_URL:-}" ]; then
+  TRADING_CORE_API_URL="https://trading-core-qthd.onrender.com"
+fi
+export USERS_CONFIG_API_URL TRADING_CORE_API_URL
+
 # Generate Nginx config (proxy upstreams — internal hostnames)
 envsubst '${PORT} ${USERS_CONFIG_API_URL} ${TRADING_CORE_API_URL}' < "$TEMPLATE" > /etc/nginx/conf.d/default.conf
 
@@ -20,10 +32,14 @@ BROWSER_USERS_URL="${VITE_USERS_CONFIG_API_URL:-}"
 BROWSER_TRADING_URL="${VITE_TRADING_CORE_URL:-}"
 
 if [ "${RENDER:-}" = "true" ] || [ "${PORT:-80}" != "80" ]; then
-  # On Render: Nginx proxya /api y /trading-core hacia los backends.
-  # Usamos SIEMPRE rutas relativas para no depender de URLs absolutas
-  # que puedan quedar desactualizadas en el dashboard de Render.
-  BROWSER_USERS_URL="/api"
+  # On Render:
+  #  - usersConfigApiUrl: URL absoluta directa al backend Java. CORS ya está
+  #    habilitado en el backend para https://stamina-frontend.onrender.com,
+  #    así que la autenticación funciona igual que antes (sin depender de proxy).
+  #  - tradingCoreUrl: ruta relativa → Nginx proxya a TRADING_CORE_API_URL
+  #    (hardcodeada con el default correcto arriba). Así el health de Python
+  #    siempre apunta a la URL actual sin depender de VITE_* viejos.
+  BROWSER_USERS_URL="${VITE_USERS_CONFIG_API_URL:-https://users-config-backend.onrender.com}"
   BROWSER_TRADING_URL="/trading-core"
 else
   # On local: default to relative paths proxied by Nginx,
