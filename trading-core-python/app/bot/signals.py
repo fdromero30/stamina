@@ -28,6 +28,9 @@ class Signal:
     take_profit: Optional[float]
     reason: str
     context: Optional[dict[str, Any]] = None  # Evaluated conditions for observability
+    # Order execution metadata (limit orders avoid slippage)
+    order_type: str = "market"  # "market" or "limit"
+    limit_price: Optional[float] = None  # required when order_type == "limit"
 
 
 @dataclass(frozen=True)
@@ -80,6 +83,36 @@ def compute_sma(prices: list[float], period: int) -> list[float]:
     return sma
 
 
+def compute_atr(candles: list[Candle], period: int = 14) -> Optional[float]:
+    """
+    Average True Range over COMPLETED candles only.
+
+    The last candle is treated as still forming and excluded.  Returns the
+    average TR over the last ``period`` completed candles, or None if there is
+    not enough data (needs at least period + 1 completed candles).
+    """
+    if period <= 0 or len(candles) < period + 2:
+        return None
+
+    completed = candles[:-1]  # exclude the forming candle
+    if len(completed) < period + 1:
+        return None
+
+    trs: list[float] = []
+    for i in range(1, len(completed)):
+        tr = max(
+            completed[i].high - completed[i].low,
+            abs(completed[i].high - completed[i - 1].close),
+            abs(completed[i].low - completed[i - 1].close),
+        )
+        trs.append(tr)
+
+    if len(trs) < period:
+        return None
+
+    return sum(trs[-period:]) / period
+
+
 def find_swing_low(candles: list[Candle], lookback: int) -> Optional[float]:
     """
     Find the most recent swing low in the candle data.
@@ -88,8 +121,9 @@ def find_swing_low(candles: list[Candle], lookback: int) -> Optional[float]:
     if len(candles) < lookback + 2:
         return None
 
-    # Only look at the most recent `lookback` candles
-    relevant = candles[-(lookback + 2):-2]  # exclude the last 2 candles (current forming)
+    # Only look at the most recent `lookback` completed candles
+    # (exclude only the last / forming candle — not two)
+    relevant = candles[-(lookback + 1):-1]
     if not relevant:
         return None
 
@@ -110,7 +144,7 @@ def find_swing_high(candles: list[Candle], lookback: int) -> Optional[float]:
     if len(candles) < lookback + 2:
         return None
 
-    relevant = candles[-(lookback + 2):-2]
+    relevant = candles[-(lookback + 1):-1]
     if not relevant:
         return None
 
@@ -122,32 +156,93 @@ def find_swing_high(candles: list[Candle], lookback: int) -> Optional[float]:
     return max(c.high for c in relevant)
 
 
+def find_ma_crossover_index(
+    prices: list[float],
+    short_ma: list[float],
+    window: int = 3,
+    exclude_forming: bool = True,
+) -> Optional[int]:
+    """
+    Find the index of the most recent candle where price crossed the short MA.
+
+    The crossover is only confirmed on COMPLETED candles: the last candle is
+    treated as still forming and excluded by default.  A small window (default
+    3) is scanned backwards so a crossover that happened 1-2 candles ago is not
+    missed when the scheduler runs slightly late (this was the root cause of
+    signals that appeared on the chart but were never turned into orders).
+
+    Returns the index ``i`` of the candle where the price crossed (``prices[i]``
+    is the "now" side of the pair), or None if no crossover is found.
+    """
+    if len(prices) < 3 or len(short_ma) < 3:
+        return None
+
+    # Align short_ma with prices.  compute_sma() returns
+    # len(prices) - period + 1 values, so the LAST SMA value corresponds to the
+    # LAST price.  We pad the front so that short_ma[i] aligns with prices[i].
+    if len(short_ma) < len(prices):
+        pad = len(prices) - len(short_ma)
+        short_ma = [short_ma[0]] * pad + list(short_ma)
+
+    # Index of the last candle we are allowed to use as the "current" side of
+    # the crossover pair.  If the last candle is still forming, exclude it.
+    end = len(prices) - (1 if exclude_forming else 0)
+    if end < 2:
+        return None
+
+    prev_end = end - 1  # last index of a completed crossover pair
+    start = max(1, prev_end - window + 1)
+
+    # Scan backwards so the MOST RECENT crossover wins.
+    for i in range(prev_end, start - 1, -1):
+        # Bullish crossover: price was at/below the short MA, now above
+        if prices[i - 1] <= short_ma[i - 1] and prices[i] > short_ma[i]:
+            return i
+
+        # Bearish crossover: price was at/above the short MA, now below
+        if prices[i - 1] >= short_ma[i - 1] and prices[i] < short_ma[i]:
+            return i
+
+    return None
+
+
 def detect_ma_crossover(
     prices: list[float],
     short_ma: list[float],
     long_ma: list[float],
+    window: int = 3,
+    exclude_forming: bool = True,
 ) -> Optional[str]:
     """
-    Detect if the last completed candle caused a crossover.
-    Returns 'bullish' if price crossed above MA, 'bearish' if below, None otherwise.
+    Detect the most recent price/short-MA crossover within a window of
+    recently COMPLETED candles.
+
+    The last candle is treated as still forming and excluded by default, so a
+    crossover is only confirmed on closed candles.  A small window (default 3)
+    is scanned backwards so a crossover that happened 1-2 candles ago is not
+    missed when the scheduler runs slightly late (this was the root cause of
+    signals that appeared on the chart but were never turned into orders).
+
+    Returns 'bullish' (price crossed above the short MA), 'bearish' (price
+    crossed below the short MA), or None.
     """
-    if len(prices) < 3 or len(short_ma) < 3 or len(long_ma) < 3:
+    # Align short_ma with prices the same way find_ma_crossover_index does.
+    if len(short_ma) < len(prices):
+        pad = len(prices) - len(short_ma)
+        short_ma = [short_ma[0]] * pad + list(short_ma)
+
+    idx = find_ma_crossover_index(
+        prices, short_ma, window=window, exclude_forming=exclude_forming
+    )
+    if idx is None:
         return None
 
-    # Align: the last element of short_ma/long_ma corresponds to the last price
-    # We need to check the current vs previous candle
-    price_now = prices[-1]
-    price_prev = prices[-2]
-
-    short_now = short_ma[-1]
-    short_prev = short_ma[-2]
-
-    # Bullish crossover: price was below MA9, now above
-    if price_prev <= short_prev and price_now > short_now:
+    # Bullish crossover: price was at/below the short MA, now above
+    if prices[idx - 1] <= short_ma[idx - 1] and prices[idx] > short_ma[idx]:
         return "bullish"
 
-    # Bearish crossover: price was above MA9, now below
-    if price_prev >= short_prev and price_now < short_now:
+    # Bearish crossover: price was at/above the short MA, now below
+    if prices[idx - 1] >= short_ma[idx - 1] and prices[idx] < short_ma[idx]:
         return "bearish"
 
     return None
@@ -221,16 +316,26 @@ def evaluate_ma_strategy(
     swing_lookback: int = 20,
     risk_per_trade: float = 0.005,
     max_positions: int = 2,
+    crossover_window: int = 1,
+    risk_reward_ratio: float = 2.0,
+    atr_period: int = 14,
+    max_candle_expansion_atr_mult: float = 1.8,
 ) -> Signal:
     """
     Evaluate the MA200 + MA9 strategy.
 
     Rules:
-    - Price > MA200 → only BUY signals when price crosses above MA9
-    - Price < MA200 → only SELL signals when price crosses below MA9
-    - Max `max_positions` open positions at a time
-    - SL = swing low (for buy) / swing high (for sell) before crossover
-    - TP = 2:1 risk:reward
+    - Price > MA200 → only BUY signals when the MA9 cross is CONFIRMED on the
+      most recent completed candle (crossover_window=1 by default: we wait for
+      the candle to CLOSE and enter at its close via a LIMIT order).
+    - Price < MA200 → only SELL signals when the MA9 cross is confirmed on the
+      most recent completed candle.
+    - Max `max_positions` open positions at a time.
+    - SL = swing low (for buy) / swing high (for sell) before crossover.
+    - TP = risk_reward_ratio : 1.
+    - Expansion filter: the entry is DISCARDED when the confirmation candle's
+      body is larger than max_candle_expansion_atr_mult × ATR(atr_period)
+      (avoids entering far from the optimal level after a news/expansion candle).
     """
     # ── Calculate MAs ──────────────────────────────────────────────
     closes = [c.close for c in candles]
@@ -248,15 +353,42 @@ def evaluate_ma_strategy(
             reason="Failed to compute MAs",
         )
 
-    # ── Check trend direction (price vs MA200) ──────────────────────
-    current_price = closes[-1]
-    current_ma200 = ma_long[-1]
+    # Align both MAs to the full price array so that ma_*[i] corresponds to
+    # closes[i].  compute_sma() returns len(prices) - period + 1 values, so the
+    # missing front values are padded with the first SMA value.
+    def _align_ma(ma: list[float]) -> list[float]:
+        if len(ma) < len(closes):
+            pad = len(closes) - len(ma)
+            return [ma[0]] * pad + list(ma)
+        return ma
 
-    price_above_ma200 = current_price > current_ma200
-    price_below_ma200 = current_price < current_ma200
+    ma_short_aligned = _align_ma(ma_short)
+    ma_long_aligned = _align_ma(ma_long)
 
-    # ── Detect crossover ────────────────────────────────────────────
-    crossover = detect_ma_crossover(closes, ma_short, ma_long)
+    # ── Detect crossover (on COMPLETED candles only) ────────────────
+    crossover_index = find_ma_crossover_index(
+        closes, ma_short, window=crossover_window
+    )
+    crossover = detect_ma_crossover(
+        closes, ma_short, ma_long, window=crossover_window
+    )
+
+    # Use the price/MA of the candle where the crossover happened, NOT the
+    # still-forming last candle.  This is the real entry reference for the
+    # limit order and the correct trend filter (price vs MA200).
+    if crossover_index is not None:
+        trend_price = closes[crossover_index]
+        trend_ma200 = ma_long_aligned[crossover_index]
+        crossover_close = closes[crossover_index]
+    else:
+        # No crossover; fall back to the last completed candle (close of
+        # candles[-2]) so the context values stay meaningful.
+        trend_price = closes[-2] if len(closes) > 1 else closes[-1]
+        trend_ma200 = ma_long[-2] if len(ma_long) > 1 else ma_long[-1]
+        crossover_close = trend_price
+
+    price_above_ma200 = trend_price > trend_ma200
+    price_below_ma200 = trend_price < trend_ma200
 
     # Build the context of evaluated conditions for observability
     context: dict[str, Any] = {
@@ -264,8 +396,12 @@ def evaluate_ma_strategy(
         "ma_short_period": strategy.ma_short_period,
         "ma_long_period": strategy.ma_long_period,
         "ma_short_value": round(ma_short[-1], 5) if ma_short else None,
-        "ma_long_value": round(current_ma200, 5),
-        "current_price": round(current_price, 5),
+        "ma_long_value": round(ma_long[-1], 5),
+        "current_price": round(closes[-1], 5),
+        "trend_price": round(trend_price, 5),
+        "trend_ma200": round(trend_ma200, 5),
+        "crossover_index": crossover_index,
+        "crossover_close": round(crossover_close, 5),
         "bid": market_data.bid,
         "ask": market_data.ask,
         "price_above_ma200": price_above_ma200,
@@ -276,6 +412,8 @@ def evaluate_ma_strategy(
         "account_balance": account_balance,
         "risk_per_trade": risk_per_trade,
         "swing_lookback": swing_lookback,
+        "crossover_window": crossover_window,
+        "risk_reward_ratio": risk_reward_ratio,
     }
 
     if len(candles) < strategy.ma_long_period + 10:
@@ -315,8 +453,45 @@ def evaluate_ma_strategy(
             context=context,
         )
 
+    # ── Expansion Filter (ATR) ─────────────────────────────────────
+    # If the confirmation candle (the one that closed the cross) is an
+    # abnormally large expansion candle, the entry is DISCARDED: entering at
+    # the next candle's open/close would be far from the optimal level.
+    assert crossover_index is not None
+    confirmation_candle = candles[crossover_index]
+    candle_body = abs(confirmation_candle.close - confirmation_candle.open)
+
+    atr = compute_atr(candles, atr_period)
+    if atr is not None and candle_body > max_candle_expansion_atr_mult * atr:
+        context.update({
+            "candle_body": round(candle_body, 5),
+            "atr": round(atr, 5),
+            "atr_threshold": round(max_candle_expansion_atr_mult * atr, 5),
+            "expansion_filtered": True,
+        })
+        return Signal(
+            action=SignalAction.HOLD,
+            confidence=0.0,
+            units=0.0,
+            entry_price=0.0,
+            stop_loss=None,
+            take_profit=None,
+            reason=(
+                f"Entrada descartada por filtro de expansión: body={candle_body:.5f} "
+                f"> {max_candle_expansion_atr_mult:.1f}×ATR({atr_period})="
+                f"{max_candle_expansion_atr_mult*atr:.5f}"
+            ),
+            context=context,
+        )
+
+    context["expansion_filtered"] = False
+
     # ── Evaluate signal based on trend ──────────────────────────────
-    entry_price = market_data.ask if crossover == "bullish" else market_data.bid
+    # Use the CLOSE of the completed crossover candle as the limit price.
+    # This avoids slippage: we place a LIMIT order at the exact price that
+    # triggered the signal instead of chasing the market at the current bid/ask.
+    limit_price = round(crossover_close, 5)
+    entry_price = limit_price
 
     if crossover == "bullish" and price_above_ma200:
         # BUY signal: price above MA200 and crossed above MA9
@@ -333,7 +508,9 @@ def evaluate_ma_strategy(
                 context=context,
             )
 
-        take_profit = calculate_take_profit(entry_price, stop_loss, 2.0, is_buy=True)
+        take_profit = calculate_take_profit(
+            entry_price, stop_loss, risk_reward_ratio, is_buy=True
+        )
         units = calculate_units(account_balance, risk_per_trade, entry_price, stop_loss)
 
         if units <= 0:
@@ -362,9 +539,11 @@ def evaluate_ma_strategy(
             entry_price=entry_price,
             stop_loss=stop_loss,
             take_profit=take_profit,
-            reason=f"BUY: price {current_price:.5f} > MA200 {current_ma200:.5f}, "
-                   f"crossed above MA9. SL={stop_loss:.5f}, TP={take_profit:.5f}",
+            reason=f"BUY: price {trend_price:.5f} > MA200 {trend_ma200:.5f}, "
+                   f"crossed above MA9. Limit={limit_price:.5f}, SL={stop_loss:.5f}, TP={take_profit:.5f}",
             context=context,
+            order_type="limit",
+            limit_price=limit_price,
         )
 
     elif crossover == "bearish" and price_below_ma200:
@@ -382,7 +561,9 @@ def evaluate_ma_strategy(
                 context=context,
             )
 
-        take_profit = calculate_take_profit(entry_price, stop_loss, 2.0, is_buy=False)
+        take_profit = calculate_take_profit(
+            entry_price, stop_loss, risk_reward_ratio, is_buy=False
+        )
         units = calculate_units(account_balance, risk_per_trade, entry_price, stop_loss)
 
         if units <= 0:
@@ -411,9 +592,11 @@ def evaluate_ma_strategy(
             entry_price=entry_price,
             stop_loss=stop_loss,
             take_profit=take_profit,
-            reason=f"SELL: price {current_price:.5f} < MA200 {current_ma200:.5f}, "
-                   f"crossed below MA9. SL={stop_loss:.5f}, TP={take_profit:.5f}",
+            reason=f"SELL: price {trend_price:.5f} < MA200 {trend_ma200:.5f}, "
+                   f"crossed below MA9. Limit={limit_price:.5f}, SL={stop_loss:.5f}, TP={take_profit:.5f}",
             context=context,
+            order_type="limit",
+            limit_price=limit_price,
         )
 
     # Signal direction doesn't match trend

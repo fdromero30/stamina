@@ -87,59 +87,87 @@ def generate_mock_candles_with_crossover(
     trend: str = "uptrend",
 ) -> list[Candle]:
     """
-    Generate mock candles that will trigger a MA crossover at the LAST candle.
+    Generate DETERMINISTIC mock candles with a clear trend and a MA9 crossover
+    at the MOST RECENT COMPLETED candle (so it works with crossover_window=1).
 
-    For uptrend: prices stay flat/declining for most candles, then a sharp
-    spike at the last 2 candles to create a bullish MA9 crossover.
-    For downtrend: prices stay flat/rising for most candles, then a sharp
-    drop at the last 2 candles to create a bearish MA9 crossover.
+    Uptrend:
+      - Phase 1: flat at 1.0500 for most candles (MA9 ≈ 1.0500, price above MA200)
+      - Phase 2: pullback below the MA9 (5 candles)
+      - Phase 3: rally that crosses ABOVE the MA9 exactly on the last completed
+                 candle (index -2); the final candle (index -1) is forming.
+
+    Downtrend is the mirrored version (flat → pull-up → drop through MA9).
     """
     candles: list[Candle] = []
-    base_price = 1.0500
-
-    # Phase 1: Generate base candles (flat-ish price)
-    for i in range(count - 3):
-        noise = random.uniform(-0.0003, 0.0003)
-        price = base_price + noise * 0.5 * (i / count)
-        candles.append(Candle(
-            open=round(price, 5),
-            high=round(price + 0.0003, 5),
-            low=round(price - 0.0003, 5),
-            close=round(price + noise, 5),
-        ))
-
-    # Phase 2: Add the last 3 candles with a deliberate crossover
-    last_price = candles[-1].close if candles else base_price
-    short_ma_period = ma_short
 
     if trend == "uptrend":
-        # Candle at last-2: price below MA9
-        p1 = last_price * 0.998  # slightly below
-        # Candle at last-1: still below MA9
-        p2 = last_price * 0.999
-        # Candle at last: sharp spike above MA9
-        p3 = last_price * 1.005
+        flat = 1.0500
+        # Phase 1: flat at 1.0500 (MA9 converges to 1.0500, price > MA200)
+        n1 = count - 10
+        for _ in range(n1):
+            candles.append(Candle(
+                open=round(flat - 0.0002, 5),
+                high=round(flat + 0.0007, 5),
+                low=round(flat - 0.0007, 5),
+                close=round(flat, 5),
+            ))
 
-        candles.append(Candle(open=round(p1, 5), high=round(p1 + 0.0003, 5),
-                              low=round(p1 - 0.0003, 5), close=round(p1, 5)))
-        candles.append(Candle(open=round(p2, 5), high=round(p2 + 0.0003, 5),
-                              low=round(p2 - 0.0003, 5), close=round(p2, 5)))
-        candles.append(Candle(open=round(p3, 5), high=round(p3 + 0.0003, 5),
-                              low=round(p3 - 0.0003, 5), close=round(p3, 5)))
+        # Phase 2: pullback below the MA9 (5 candles)
+        pull = [1.0495, 1.0490, 1.0485, 1.0480, 1.0478]
+        for p in pull:
+            candles.append(Candle(
+                open=round(p + 0.0002, 5),
+                high=round(p + 0.0007, 5),
+                low=round(p - 0.0007, 5),
+                close=round(p, 5),
+            ))
+
+        # Phase 3: rally - MA9 is now ~1.0493, so 1.0490 is below and
+        # 1.0505 is clearly above → cross happens on the last completed candle.
+        r1 = 1.0490   # still below the MA9
+        r2 = 1.0505   # crosses ABOVE the MA9 (last completed = index -2)
+        r3 = 1.0515   # forming candle (excluded)
+        for p in (r1, r2, r3):
+            candles.append(Candle(
+                open=round(p - 0.0002, 5),
+                high=round(p + 0.0007, 5),
+                low=round(p - 0.0007, 5),
+                close=round(p, 5),
+            ))
     else:
-        # Candle at last-2: price above MA9
-        p1 = last_price * 1.002
-        # Candle at last-1: still above MA9
-        p2 = last_price * 1.001
-        # Candle at last: sharp drop below MA9
-        p3 = last_price * 0.995
+        flat = 1.0500
+        # Phase 1: flat at 1.0500 (MA9 converges to 1.0500, price < MA200)
+        n1 = count - 10
+        for _ in range(n1):
+            candles.append(Candle(
+                open=round(flat + 0.0002, 5),
+                high=round(flat + 0.0007, 5),
+                low=round(flat - 0.0007, 5),
+                close=round(flat, 5),
+            ))
 
-        candles.append(Candle(open=round(p1, 5), high=round(p1 + 0.0003, 5),
-                              low=round(p1 - 0.0003, 5), close=round(p1, 5)))
-        candles.append(Candle(open=round(p2, 5), high=round(p2 + 0.0003, 5),
-                              low=round(p2 - 0.0003, 5), close=round(p2, 5)))
-        candles.append(Candle(open=round(p3, 5), high=round(p3 + 0.0003, 5),
-                              low=round(p3 - 0.0003, 5), close=round(p3, 5)))
+        # Phase 2: pullback above the MA9 (5 candles)
+        pull = [1.0505, 1.0510, 1.0515, 1.0520, 1.0522]
+        for p in pull:
+            candles.append(Candle(
+                open=round(p - 0.0002, 5),
+                high=round(p + 0.0007, 5),
+                low=round(p - 0.0007, 5),
+                close=round(p, 5),
+            ))
+
+        # Phase 3: drop - MA9 is now ~1.0507, so 1.0510 is above and
+        # 1.0495 is clearly below → cross happens on the last completed candle.
+        r1 = 1.0510   # still above the MA9
+        r2 = 1.0495   # crosses BELOW the MA9 (last completed = index -2)
+        r3 = 1.0485   # forming candle (excluded)
+        for p in (r1, r2, r3):
+            candles.append(Candle(
+                open=round(p + 0.0002, 5),
+                high=round(p + 0.0007, 5),
+                low=round(p - 0.0007, 5),
+                close=round(p, 5),
+            ))
 
     return candles
 
@@ -177,8 +205,9 @@ def test_swing_detection():
 
     sh = find_swing_high(candles, lookback=5)
     print(f"  Swing high: {sh}")
-    # The most recent swing high is 1.3 (candle 3), not 1.4 (candle 5 is at the edge)
-    assert sh is not None and sh == 1.3, f"Expected 1.3, got {sh}"
+    # With only 1 forming candle excluded, candle 5 (high=1.4) is a valid
+    # completed swing high: 1.4 > 1.2 (c4) and 1.4 > 1.3 (c6).
+    assert sh is not None and sh == 1.4, f"Expected 1.4, got {sh}"
     print("  ✓ find_swing_high: correct")
 
 
@@ -418,6 +447,111 @@ def test_max_positions_limit():
     print(f"  ✓ Max positions limit: {signal.reason}")
 
 
+def test_expansion_filter_rejects_oversized_candle():
+    """
+    Test that a crossover candle with an abnormally large body
+    (body > 1.8 × ATR(14)) is DISCARDED by the expansion filter.
+
+    Build on the deterministic uptrend generator and then inflate the body
+    of the confirmation candle (the last completed candle) so it exceeds
+    the ATR threshold.
+    """
+    def _build(scale: float, count: int = 300) -> list[Candle]:
+        """
+        Uptrend mock where the crossover candle (candles[-2], the last
+        COMPLETED candle) has its body scaled by `scale` (base 1.0).
+
+        The crossover is designed to occur exactly on candles[-2] with the
+        deterministic mock generator, so we can safely inflate that candle.
+        """
+        candles = generate_mock_candles_with_crossover(
+            count=count, trend="uptrend", ma_short=9, ma_long=200
+        )
+        if scale == 1.0:
+            return candles
+
+        # candles[-2] is the closed crossover candle; candles[-1] is forming.
+        c = candles[-2]
+        body = abs(c.close - c.open)
+        mid = (c.open + c.close) / 2
+
+        new_candles = list(candles)
+        new_open = mid - (body * scale) / 2
+        new_close = mid + (body * scale) / 2
+        new_candles[-2] = Candle(
+            open=round(new_open, 5),
+            high=round(max(new_open, new_close) + 0.0005, 5),
+            low=round(min(new_open, new_close) - 0.0005, 5),
+            close=round(new_close, 5),
+        )
+        return new_candles
+
+    strategy = StrategyConfig(
+        id="test-expansion",
+        user_id="user-1",
+        symbol="EUR/USD",
+        enabled=True,
+        ma_short_period=9,
+        ma_long_period=200,
+        max_position_size=1000.0,
+        max_open_positions=2,
+        stop_loss=None,
+        take_profit=None,
+        break_even_trigger=1.5,
+        use_ml=False,
+        ml_strategy_code=None,
+    )
+
+    # 1) Normal candle → BUY passes the filter
+    normal = _build(scale=1.0)
+    md_normal = MarketData(
+        bid=normal[-1].close - 0.0001,
+        ask=normal[-1].close + 0.0001,
+        instrument_id=12345,
+    )
+    signal_normal = evaluate_ma_strategy(
+        strategy=strategy,
+        candles=normal,
+        market_data=md_normal,
+        account_balance=10000.0,
+        open_positions_count=0,
+        crossover_window=1,
+        atr_period=14,
+        max_candle_expansion_atr_mult=1.8,
+    )
+    print(f"  Normal signal: {signal_normal.action.value} ({signal_normal.reason})")
+    assert signal_normal.action in (SignalAction.BUY, SignalAction.HOLD), \
+        f"Expected BUY or HOLD on normal candle, got {signal_normal.action}"
+    assert signal_normal.context.get("expansion_filtered") is False
+
+    # 2) Oversized candle (20× body) → HOLD rejected by the filter.
+    #    A real news-candle of this size inflates the ATR too, so we need a
+    #    scale large enough that body > 1.8 × new_ATR.
+    inflated = _build(scale=20.0)
+    md_inflated = MarketData(
+        bid=inflated[-1].close - 0.0001,
+        ask=inflated[-1].close + 0.0001,
+        instrument_id=12345,
+    )
+    signal_inflated = evaluate_ma_strategy(
+        strategy=strategy,
+        candles=inflated,
+        market_data=md_inflated,
+        account_balance=10000.0,
+        open_positions_count=0,
+        crossover_window=1,
+        atr_period=14,
+        max_candle_expansion_atr_mult=1.8,
+    )
+    print(f"  Inflated signal: {signal_inflated.action.value} ({signal_inflated.reason})")
+    assert signal_inflated.action == SignalAction.HOLD, \
+        f"Expected HOLD (expansion filter) for inflated candle, got {signal_inflated.action}"
+    assert signal_inflated.context.get("expansion_filtered") is True, \
+        "expansion_filtered should be True in context"
+    assert "filtro de expansión" in signal_inflated.reason
+    print("  ✓ Expansion filter: correctly rejected the oversized candle")
+
+
 if __name__ == "__main__":
     print("=" * 60)
     print("  Deterministic Signal Engine - Test Suite")
@@ -451,6 +585,10 @@ if __name__ == "__main__":
 
     print("[7/7] Testing max positions limit...")
     test_max_positions_limit()
+    print()
+
+    print("[8/8] Testing expansion filter (ATR)...")
+    test_expansion_filter_rejects_oversized_candle()
     print()
 
     print("=" * 60)

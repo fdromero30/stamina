@@ -286,6 +286,32 @@ public class EtoroClient {
     }
 
     @SuppressWarnings("unchecked")
+    public Map<String, Object> placeDemoLimitOrderByUnits(UUID userId,
+                                                           int instrumentId,
+                                                           boolean isBuy,
+                                                           int leverage,
+                                                           double units,
+                                                           java.math.BigDecimal limitRate,
+                                                           java.math.BigDecimal stopLossRate,
+                                                           java.math.BigDecimal takeProfitRate) {
+        Map<String, Object> body = new java.util.HashMap<>();
+        body.put("InstrumentID", instrumentId);
+        body.put("IsBuy", isBuy);
+        body.put("Leverage", leverage);
+        body.put("AmountInUnits", units);
+        body.put("LimitRate", limitRate);
+        if (stopLossRate != null) body.put("StopLossRate", stopLossRate);
+        if (takeProfitRate != null) body.put("TakeProfitRate", takeProfitRate);
+        return (Map<String, Object>) applyHeaders(
+                restClient.post()
+                        .uri("/trading/execution/demo/limit-open-orders/by-units")
+                        .body(body),
+                userId)
+                .retrieve()
+                .body(Map.class);
+    }
+
+    @SuppressWarnings("unchecked")
     public Map<String, Object> closeDemoPosition(UUID userId, int positionId, Double unitsToDeduct) {
         Map<String, Object> body = Map.of(
                 "InstrumentId", positionId,
@@ -340,6 +366,32 @@ public class EtoroClient {
         return (Map<String, Object>) applyHeaders(
                 restClient.post()
                         .uri("/trading/execution/market-open-orders/by-units")
+                        .body(body),
+                userId)
+                .retrieve()
+                .body(Map.class);
+    }
+
+    @SuppressWarnings("unchecked")
+    public Map<String, Object> placeLimitOrderByUnits(UUID userId,
+                                                       int instrumentId,
+                                                       boolean isBuy,
+                                                       int leverage,
+                                                       double units,
+                                                       java.math.BigDecimal limitRate,
+                                                       java.math.BigDecimal stopLossRate,
+                                                       java.math.BigDecimal takeProfitRate) {
+        Map<String, Object> body = new java.util.HashMap<>();
+        body.put("InstrumentID", instrumentId);
+        body.put("IsBuy", isBuy);
+        body.put("Leverage", leverage);
+        body.put("AmountInUnits", units);
+        body.put("LimitRate", limitRate);
+        if (stopLossRate != null) body.put("StopLossRate", stopLossRate);
+        if (takeProfitRate != null) body.put("TakeProfitRate", takeProfitRate);
+        return (Map<String, Object>) applyHeaders(
+                restClient.post()
+                        .uri("/trading/execution/limit-open-orders/by-units")
                         .body(body),
                 userId)
                 .retrieve()

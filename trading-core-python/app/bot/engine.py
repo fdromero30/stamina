@@ -350,7 +350,9 @@ class TradingBotEngine:
             if (is_buy and sl >= entry) or (not is_buy and sl <= entry):
                 return None, None
 
-            tp = calculate_take_profit(entry, sl, 2.0, is_buy=is_buy)
+            tp = calculate_take_profit(
+                entry, sl, settings.risk_reward_ratio, is_buy=is_buy
+            )
             return sl, tp
         except Exception as e:
             logger.warning(
@@ -462,6 +464,10 @@ class TradingBotEngine:
                 swing_lookback=settings.swing_lookback_candles,
                 risk_per_trade=settings.risk_per_trade,
                 max_positions=settings.max_open_positions,
+                crossover_window=settings.crossover_window_candles,
+                risk_reward_ratio=settings.risk_reward_ratio,
+                atr_period=settings.atr_period,
+                max_candle_expansion_atr_mult=settings.max_candle_expansion_atr_mult,
             )
 
             result["signal"] = {
@@ -473,6 +479,8 @@ class TradingBotEngine:
                 "take_profit": signal.take_profit,
                 "reason": signal.reason,
                 "context": signal.context,
+                "order_type": signal.order_type,
+                "limit_price": signal.limit_price,
             }
 
             # 7. Execute trade if signal is actionable
@@ -525,6 +533,8 @@ class TradingBotEngine:
             "stopLoss": signal.stop_loss,
             "takeProfit": signal.take_profit,
             "breakEvenTrigger": settings.break_even_ratio,
+            "orderType": signal.order_type,
+            "limitPrice": signal.limit_price,
         }
 
         async with httpx.AsyncClient(timeout=30) as client:

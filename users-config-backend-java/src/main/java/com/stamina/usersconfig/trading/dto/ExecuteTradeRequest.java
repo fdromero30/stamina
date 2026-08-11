@@ -29,6 +29,12 @@ public record ExecuteTradeRequest(
         BigDecimal takeProfit,
 
         /** When the trade reaches this risk:reward ratio, SL is moved to breakeven. */
-        BigDecimal breakEvenTrigger
+        BigDecimal breakEvenTrigger,
+
+        /** Order type: "market" (default) or "limit" (avoid slippage). */
+        String orderType,
+
+        /** Limit price (required when orderType == "limit"). */
+        BigDecimal limitPrice
 ) {
 }

@@ -27,6 +27,21 @@ class Settings(BaseSettings):
     # ── Swing Lookback (for SL calculation) ───────────────────────────
     swing_lookback_candles: int = 20
 
+    # ── Crossover Window: ONLY the most recent completed candle is scanned.
+    #    (1 = confirm the cross on the closed candle and enter at its close;
+    #     does not chase signals from older candles)
+    crossover_window_candles: int = 1
+
+    # ── Risk : Reward for Take Profit (TP = risk * ratio) ─────────────
+    risk_reward_ratio: float = 2.0
+
+    # ── Expansion Filter (ATR): discard entries whose confirmation candle
+    #    moved more than max_candle_expansion_atr_mult × ATR(atr_period)
+    #    (protects against entering far from the optimal level after a
+    #     news/expansion candle) ─────────────────────────────────────────
+    atr_period: int = 14
+    max_candle_expansion_atr_mult: float = 1.8
+
     # ── Fallback Balance ──────────────────────────────────────────────
     fallback_account_balance: float = 10000.0
 
