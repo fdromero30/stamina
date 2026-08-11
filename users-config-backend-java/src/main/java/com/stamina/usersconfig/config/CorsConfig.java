@@ -16,7 +16,7 @@ public class CorsConfig {
 
     // Comma-separated list of allowed origins, from CORS_ALLOWED_ORIGINS env var.
     // In production set it to your HTTPS domain(s), e.g.:
-    //   CORS_ALLOWED_ORIGINS=https://stamina.example.com
+    // CORS_ALLOWED_ORIGINS=https://stamina.example.com
     // In local dev the default keeps localhost working.
     @Value("${cors.allowed-origins:}")
     private String allowedOrigins;
@@ -28,10 +28,9 @@ public class CorsConfig {
         CorsConfiguration configuration = new CorsConfiguration();
         if (allowedOrigins == null || allowedOrigins.isBlank()) {
             configuration.setAllowedOriginPatterns(Arrays.asList(
-                "http://localhost:*",
-                "http://127.0.0.1:*",
-                "https://*.onrender.com"
-            ));
+                    "http://localhost:*",
+                    "http://127.0.0.1:*",
+                    "https://*.onrender.com"));
         } else {
             configuration.setAllowedOriginPatterns(Arrays.asList(allowedOrigins.split(",")));
         }
@@ -52,21 +51,22 @@ public class CorsConfig {
                 if (allowedOrigins == null || allowedOrigins.isBlank()) {
                     // Default: local dev + Render `.onrender.com` origins.
                     // En producción se puede sobreescribir con CORS_ALLOWED_ORIGINS.
-                    origins = new String[]{
-                        "http://localhost:*",
-                        "http://127.0.0.1:*",
-                        "https://*.onrender.com"
+                    origins = new String[] {
+                            "http://localhost",
+                            "http://localhost:*",
+                            "http://127.0.0.1",
+                            "http://127.0.0.1:*",
+                            "https://*.onrender.com"
                     };
                 } else {
                     origins = allowedOrigins.split(",");
                 }
                 registry.addMapping("/**")
-                  .allowedOriginPatterns(origins)
-                    .allowedMethods("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS")
-                    .allowedHeaders("*")
-                    .allowCredentials(true);
+                        .allowedOriginPatterns(origins)
+                        .allowedMethods("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS")
+                        .allowedHeaders("*")
+                        .allowCredentials(true);
             }
         };
     }
 }
-
