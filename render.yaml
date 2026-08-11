@@ -1,13 +1,4 @@
 # Render Blueprint — render.yaml
-# ARQUITECTURA:
-# Los 3 servicios son `type: web` (plan free). NO hay red privada
-# disponible en free tier → la comunicación entre servicios usa la
-# URL pública HTTPS + SNI (proxy_ssl_server_name on en Nginx).
-#
-#   Navegador → stamina-frontend.onrender.com
-#     /api → Nginx → https://users-config-backend.onrender.com (SNI)
-#     /trading-core → Nginx → https://trading-core.onrender.com (SNI)
-
 services:
   # ── 1. Backend Java (Spring Boot) ────────────────────────────────
   - type: web
@@ -33,6 +24,9 @@ services:
         generateValue: true
       - key: ETORO_MOCK
         value: "false"
+      # CORS: permite al navegador del frontend llamar al backend directo
+      - key: CORS_ALLOWED_ORIGINS
+        value: https://stamina-frontend.onrender.com
 
   # ── 2. Trading Core (Python/FastAPI) ─────────────────────────────
   - type: web
@@ -43,7 +37,7 @@ services:
     dockerfilePath: Dockerfile
     healthCheckPath: /health
     envVars:
-      # HTTPS público del backend (comunicación service-to-service)
+      # Comunicación directa HTTPS (sin proxy Nginx)
       - key: USERS_CONFIG_API_URL
         value: https://users-config-backend.onrender.com
       - key: BOT_API_TOKEN
@@ -57,12 +51,17 @@ services:
     rootDir: frontend-react
     dockerfilePath: Dockerfile
     healthCheckPath: /
+    build:
+      dockerBuildArgs:
+        # Build-time args: se inyectan durante `npm run build` en Docker
+        # para que el bundle JS contenga las URLs absolutas de los backends
+        VITE_USERS_CONFIG_API_URL: https://users-config-backend.onrender.com
+        VITE_TRADING_CORE_URL: https://trading-core.onrender.com
     envVars:
-      # Detectado por entrypoint.sh para template con SNI
+      # Detectado por entrypoint.sh para template solo estáticos
       - key: RENDER
         value: "true"
-      # HTTPS público + SNI (proxy_ssl_server_name on en Nginx)
-      # — NO usar http:// ni hostname interno (free tier no tiene red privada)
+      # Nginx no proxy APIs en Render — el bundle usa URLs absolutas con CORS
       - key: USERS_CONFIG_API_URL
         value: https://users-config-backend.onrender.com
       - key: TRADING_CORE_API_URL
