@@ -207,8 +207,10 @@ El servidor de desarrollo corre en `http://localhost:5174` y hace proxy de `/api
 #### Nginx parametrizable (local vs Render)
 
 El Dockerfile incluye dos templates seleccionados por `entrypoint.sh`:
-- Local (sin RENDER): `nginx.local.conf` -> proxy HTTP a red interna
-- Render (RENDER=true): `nginx.render.conf` -> proxy HTTPS con SNI
+- Local (sin RENDER): `nginx.local.conf` -> proxy HTTP a red interna Docker
+- Render (RENDER=true): `nginx.render.conf` -> proxy HTTP interno de Render
+
+En Render la comunicacion entre servicios usa HTTP interno (sin SSL) para evitar el 502 Bad Gateway por handshake SSL a la IP publica compartida.
 
 ### Trading Core (Python + FastAPI)
 

@@ -51,9 +51,9 @@ services:
     dockerfilePath: Dockerfile
     healthCheckPath: /health
     envVars:
-      # Reemplaza el dominio onrender cuando Render te asigne la URL real
+      # Comunicación INTERNA con el backend (HTTP, sin SSL)
       - key: USERS_CONFIG_API_URL
-        value: https://users-config-backend.onrender.com
+        value: http://users-config-backend.onrender.com
       - key: BOT_API_TOKEN
         generateValue: true
 
@@ -67,11 +67,13 @@ services:
     healthCheckPath: /
     envVars:
       # RENDER=true es detectado por entrypoint.sh para usar el template
-      # con SNI (evita el 502 Bad Gateway en el handshake SSL).
+      # de red interna (HTTP directo al servicio, sin handshake SSL).
       - key: RENDER
         value: "true"
-      # Reemplaza los dominios onrender cuando Render te asigne las URLs reales
+      # Comunicación INTERNA entre servicios: HTTP directo al hostname
+      # del servicio (evita el 502 Bad Gateway por handshake SSL a la
+      # IP pública compartida de Render).
       - key: USERS_CONFIG_API_URL
-        value: https://users-config-backend.onrender.com
+        value: http://users-config-backend.onrender.com
       - key: TRADING_CORE_API_URL
-        value: https://trading-core.onrender.com
+        value: http://trading-core.onrender.com
