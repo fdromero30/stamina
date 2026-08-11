@@ -43,13 +43,13 @@ BROWSER_TRADING_URL="${VITE_TRADING_CORE_URL:-}"
 if [ "${RENDER:-}" = "true" ] || [ "${PORT:-80}" != "80" ]; then
   # On Render:
   #  - usersConfigApiUrl: URL absoluta directa al backend Java. CORS ya está
-  #    habilitado en el backend para https://stamina-frontend.onrender.com,
-  #    así que la autenticación funciona igual que antes (sin depender de proxy).
-  #  - tradingCoreUrl: ruta relativa → Nginx proxya a TRADING_CORE_API_URL
-  #    (hardcodeada con el default correcto arriba). Así el health de Python
-  #    siempre apunta a la URL actual sin depender de VITE_* viejos.
+  #    habilitado para https://stamina-frontend.onrender.com.
+  #  - tradingCoreUrl: URL absoluta directa al trading-core. CORS del FastAPI
+  #    permite "*" (allow_origins=["*"]), así que el browser llama directo.
+  #    NO usar proxy Nginx server-to-server: Render/Cloudflare bloquea el SSL
+  #    handshake entre servicios usando URLs públicas (*.onrender.com) → 502.
   BROWSER_USERS_URL="${VITE_USERS_CONFIG_API_URL:-https://users-config-backend.onrender.com}"
-  BROWSER_TRADING_URL="/trading-core"
+  BROWSER_TRADING_URL="${VITE_TRADING_CORE_URL:-https://trading-core-qthd.onrender.com}"
 else
   # On local: default to relative paths proxied by Nginx,
   # BUT allow override to a production backend via VITE_* absolute URLs:
