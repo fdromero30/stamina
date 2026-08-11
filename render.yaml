@@ -56,7 +56,7 @@ services:
         # Build-time args: se inyectan durante `npm run build` en Docker
         # para que el bundle JS contenga las URLs absolutas de los backends
         VITE_USERS_CONFIG_API_URL: https://users-config-backend.onrender.com
-        VITE_TRADING_CORE_URL: https://trading-core.onrender.com
+        VITE_TRADING_CORE_URL: https://trading-core-qthd.onrender.com
     envVars:
       # Detectado por entrypoint.sh para template solo estáticos
       - key: RENDER
@@ -65,4 +65,4 @@ services:
       - key: USERS_CONFIG_API_URL
         value: https://users-config-backend.onrender.com
       - key: TRADING_CORE_API_URL
-        value: https://trading-core.onrender.com
+        value: https://trading-core-qthd.onrender.com
