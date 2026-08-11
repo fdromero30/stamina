@@ -26,7 +26,9 @@ export function DashboardPage({ session, initialView = "dashboard", onLogout, ov
   const { data: botStatus } = useGetBotStatusQuery(undefined, { pollingInterval: 5000 });
   const { data: botCycles } = useGetBotCyclesQuery(undefined, { pollingInterval: 5000 });
 
-  const lastCycle = botCycles?.cycles?.[0];
+  const lastCycle =
+    botCycles?.recent_cycles?.[0] ??
+    botCycles?.runs?.find((run) => run.cycles && run.cycles.length > 0)?.cycles?.[0];
   const lastEvaluation = lastCycle?.evaluations?.[0];
   const signal = lastEvaluation?.signal;
   const ctx = signal?.context;

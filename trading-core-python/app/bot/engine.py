@@ -74,6 +74,29 @@ class TradingBotEngine:
         """Return the in-memory open positions tracker (per user)."""
         return self._open_positions
 
+    async def get_active_strategy(self) -> dict[str, Any]:
+        """Return the strategy currently active (or the default hardcoded one)."""
+        try:
+            strategies = await self._strategies_client.get_strategies()
+            enabled = [s for s in strategies if s.enabled]
+            if enabled:
+                s = enabled[0]
+                return {
+                    "id": s.id,
+                    "name": s.name,
+                    "symbol": s.symbol,
+                    "is_default": False,
+                }
+        except Exception as e:
+            logger.warning("Failed to fetch strategies for status: %s", e)
+
+        return {
+            "id": "default-ma200-ma9",
+            "name": "MA200 + MA9 Crossover (Default)",
+            "symbol": "EUR/USD",
+            "is_default": True,
+        }
+
     async def run_trading_cycle(self) -> dict[str, Any]:
         """Execute a single trading cycle for all enabled strategies."""
         logger.info("Starting trading cycle...")

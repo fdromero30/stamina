@@ -251,20 +251,30 @@ async def stop_bot() -> dict[str, object]:
 @app.get("/bot/status")
 async def bot_status() -> dict[str, object]:
     """Get the current status of the trading scheduler."""
+    # Estrategia activa (real o default EUR/USD)
+    strategy = await engine.get_active_strategy()
     return {
         "running": scheduler.is_running,
         "interval_seconds": scheduler.interval_seconds,
         "cycles_completed": scheduler.cycle_count,
         "last_run": scheduler.last_run.isoformat() if scheduler.last_run else None,
         "next_run": scheduler.next_run.isoformat() if scheduler.next_run else None,
+        "strategy": strategy,
+        "run_id": getattr(scheduler, "_run_id", None),
     }
 
 
 @app.get("/bot/cycles")
 async def bot_cycles() -> dict[str, object]:
-    """Get the recent cycle history and open positions for observability."""
+    """Get the recent executions (runs) with their cycles and open positions."""
+    runs = persistence.load_runs(limit=10)
+    runs_with_cycles = []
+    for run in runs:
+        cycles = persistence.load_cycles_by_run(run["id"], limit=100)
+        runs_with_cycles.append({**run, "cycles": cycles})
     return {
-        "cycles": scheduler.cycle_history,
+        "runs": runs_with_cycles,
+        "recent_cycles": scheduler.cycle_history,
         "open_positions": engine.open_positions,
     }
 

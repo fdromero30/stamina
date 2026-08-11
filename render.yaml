@@ -42,6 +42,10 @@ services:
         value: https://users-config-backend.onrender.com
       - key: BOT_API_TOKEN
         generateValue: true
+      # PostgreSQL (Supabase transaction pooler) para persistir bot_runs/bot_cycles.
+      # Si se deja vacío, trading-core usa SQLite local (ciclos se pierden al redeploy).
+      - key: DATABASE_URL
+        sync: false
 
   # ── 3. Frontend (React + Nginx) ──────────────────────────────────
   - type: web

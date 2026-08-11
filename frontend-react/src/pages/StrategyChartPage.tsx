@@ -191,6 +191,9 @@ export function StrategyChartPage({ session }: StrategyChartPageProps) {
   // Selected symbol for the chart. Defaults to EUR/USD but can be changed
   // independently of the symbol the trading engine is running on.
   const [symbol, setSymbol] = useState(initialView.symbol);
+  // Track whether the user has manually chosen a symbol. Until they do, the
+  // chart follows the bot's active strategy symbol.
+  const userTouchedSymbolRef = useRef(false);
   const [symbolInput, setSymbolInput] = useState(initialView.symbol);
   const [showSymbolDropdown, setShowSymbolDropdown] = useState(false);
   // Resizable chart height (px). Default matches the previous fixed height.
@@ -220,6 +223,7 @@ export function StrategyChartPage({ session }: StrategyChartPageProps) {
   }, [symbol]);
 
   const handleSymbolSelect = (value: string) => {
+    userTouchedSymbolRef.current = true;
     setSymbol(value);
     setShowSymbolDropdown(false);
   };
@@ -232,6 +236,7 @@ export function StrategyChartPage({ session }: StrategyChartPageProps) {
     if (e.key === "Enter") {
       const trimmed = symbolInput.trim();
       if (trimmed) {
+        userTouchedSymbolRef.current = true;
         setSymbol(trimmed.toUpperCase());
         setShowSymbolDropdown(false);
       }
@@ -249,6 +254,16 @@ export function StrategyChartPage({ session }: StrategyChartPageProps) {
 
   const { data: status } = useGetBotStatusQuery(undefined, { pollingInterval: 5000 });
   const { data: cyclesData } = useGetBotCyclesQuery(undefined, { pollingInterval: 5000 });
+
+  // Active strategy from the bot (e.g. EUR/USD MA200+MA9 default). Until the
+  // user picks a symbol manually, follow the strategy the bot is executing.
+  const activeStrategy = status?.strategy;
+
+  useEffect(() => {
+    if (!userTouchedSymbolRef.current && activeStrategy?.symbol) {
+      setSymbol(activeStrategy.symbol);
+    }
+  }, [activeStrategy?.symbol]);
 
   const [startBot, startResult] = useStartBotMutation();
   const [stopBot, stopResult] = useStopBotMutation();

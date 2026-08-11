@@ -37,6 +37,7 @@ class TradingScheduler:
         self._next_run: Optional[datetime] = None
         self._on_tick: Optional[TickHandler] = None
         self._cycle_history: list[dict[str, Any]] = []
+        self._run_id: Optional[str] = None
 
         # Restore persisted state
         self._cycle_history = persistence.load_cycle_history(limit=history_limit)
@@ -93,8 +94,10 @@ class TradingScheduler:
             raise RuntimeError("No tick handler set. Call set_tick_handler() first.")
 
         self._running = True
+        # Start a new execution record (persistent)
+        self._run_id = persistence.start_run()
         self._task = asyncio.create_task(self._run_loop())
-        logger.info("Trading scheduler started (interval=%ds)", self._interval)
+        logger.info("Trading scheduler started (interval=%ds, run=%s)", self._interval, self._run_id)
 
     async def stop(self) -> None:
         """Stop the scheduler loop gracefully."""
@@ -106,6 +109,9 @@ class TradingScheduler:
             except asyncio.CancelledError:
                 pass
             self._task = None
+        # Close the execution record ('stopped' normal)
+        persistence.finish_run(self._run_id, status="stopped")
+        self._run_id = None
         logger.info("Trading scheduler stopped")
 
     async def trigger_cycle(self) -> dict:
@@ -235,8 +241,9 @@ class TradingScheduler:
         self._cycle_history.insert(0, entry)
         del self._cycle_history[self._history_limit:]
 
-        # Persist the cycle entry to database
-        persistence.save_cycle(entry)
+        # Persist the cycle entry to database (associated with the active run)
+        persistence.save_cycle(entry, run_id=self._run_id)
+        persistence.increment_run_cycles(self._run_id)
 
         return result
 

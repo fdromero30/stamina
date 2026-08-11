@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import {
   useGetBotCyclesQuery,
+  type BotRun,
   type CycleHistoryEntry,
   type OpenPosition,
 } from "../store/botApi";
@@ -259,8 +260,58 @@ export function OpenPositionsList({ positions }: { positions: Record<string, Ope
 }
 
 /**
+ * A single bot execution (start → stop) with its cycles nested inside.
+ * Collapsible so long histories stay readable.
+ */
+function RunGroup({ run }: { run: BotRun }) {
+  const [expanded, setExpanded] = useState(false);
+  const cycles = run.cycles ?? [];
+  const statusLabel =
+    run.status === "running"
+      ? "Running"
+      : run.status === "stopped"
+        ? "Stopped"
+        : run.status === "crashed"
+          ? "Crashed"
+          : run.status;
+  const statusClass =
+    run.status === "running"
+      ? "cycle-run-status cycle-run-running"
+      : run.status === "crashed"
+        ? "cycle-run-status cycle-run-crashed"
+        : "cycle-run-status cycle-run-stopped";
+
+  return (
+    <div className="cycle-run-group">
+      <div className="cycle-run-header" onClick={() => setExpanded(!expanded)}>
+        <span className="cycle-expand">
+          {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+        </span>
+        <span className="cycle-run-id">Run #{run.id.slice(0, 8)}</span>
+        <span className="cycle-run-time">
+          {formatTime(run.started_at)}
+          {run.stopped_at ? ` → ${formatTime(run.stopped_at)}` : ""}
+        </span>
+        <span className={statusClass}>{statusLabel}</span>
+        <span className="cycle-run-cycles">{cycles.length} cycles</span>
+      </div>
+      {expanded && (
+        <div className="cycle-run-body">
+          {cycles.length === 0 && (
+            <p className="panel-muted">No cycles recorded in this run.</p>
+          )}
+          {cycles.map((cycle, idx) => (
+            <CycleDetail key={cycle.timestamp + idx} cycle={cycle} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
  * Full-cycle log panel with internal scroll.
- * Orders cycles most-recent first (the backend already returns them that way).
+ * Groups cycles by bot execution (run), most recent first.
  */
 export function CycleLog() {
   const { data: cyclesData, isLoading, isError } = useGetBotCyclesQuery(undefined, {
@@ -293,11 +344,17 @@ export function CycleLog() {
     document.body.style.userSelect = "none";
   };
 
+  const runs = cyclesData?.runs ?? [];
+  const recentCycles = cyclesData?.recent_cycles ?? [];
+  const totalCycles = runs.reduce((sum, run) => sum + (run.cycles?.length ?? 0), 0) + recentCycles.length;
+
   return (
     <div className="cycle-log-panel" ref={panelRef} style={{ height: logHeight }}>
       <div className="cycle-log-header">
         <h3>Cycle Log</h3>
-        <span className="cycle-log-count">{cyclesData?.cycles?.length ?? 0} cycles</span>
+        <span className="cycle-log-count">
+          {runs.length > 0 ? `${runs.length} runs · ${totalCycles} cycles` : `${totalCycles} cycles`}
+        </span>
       </div>
       <div className="cycle-log-scroll">
         {isLoading && (
@@ -310,12 +367,19 @@ export function CycleLog() {
             <XCircle size={16} color="#a14535" /> Error fetching cycles
           </p>
         )}
-        {!isLoading && !isError && (!cyclesData || cyclesData.cycles.length === 0) && (
+        {!isLoading && !isError && runs.length === 0 && recentCycles.length === 0 && (
           <p className="panel-muted">No cycles yet. Start the bot or run a manual cycle to see activity.</p>
         )}
-        {!isLoading && !isError && cyclesData && cyclesData.cycles.length > 0 && (
+        {!isLoading && !isError && runs.length > 0 && (
           <div className="cycle-history">
-            {cyclesData.cycles.map((cycle, idx) => (
+            {runs.map((run) => (
+              <RunGroup key={run.id} run={run} />
+            ))}
+          </div>
+        )}
+        {!isLoading && !isError && runs.length === 0 && recentCycles.length > 0 && (
+          <div className="cycle-history">
+            {recentCycles.map((cycle, idx) => (
               <CycleDetail key={cycle.timestamp + idx} cycle={cycle} />
             ))}
           </div>

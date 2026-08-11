@@ -70,6 +70,9 @@ services:
       USERS_CONFIG_API_URL: http://users-config-backend:8080
       # Protect bot endpoints with a shared token between frontend and trading-core
       BOT_API_TOKEN: ${BOT_API_TOKEN:-}
+      # PostgreSQL (Supabase transaction pooler) para persistir bot_runs/bot_cycles.
+      # Vacío → SQLite local (los ciclos se pierden al recrear el contenedor).
+      DATABASE_URL: ${DATABASE_URL:-}
     volumes:
       - stamina_trading_data:/app/data
     depends_on:

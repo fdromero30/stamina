@@ -1,214 +1,381 @@
-"""SQLite persistence for trading bot state, cycle history, and open positions."""
+"""Persistence using SQLite (local) or PostgreSQL (Supabase / production).
+
+If `settings.database_url` is set, PostgreSQL is used; otherwise local SQLite.
+The schema is portable: TEXT for timestamps/JSON keeps it compatible with both.
+"""
 
 import json
 import logging
 import sqlite3
+import uuid
 from datetime import datetime, timezone
-from pathlib import Path
-from typing import Any
+from typing import Any, Optional
+
+from ..settings import settings
 
 logger = logging.getLogger(__name__)
 
-DB_PATH = Path(__file__).resolve().parent.parent / "data" / "bot_state.db"
+
+class Database:
+    """Uniform DB wrapper. Creates the connection on first use (lazy)."""
+
+    def __init__(self, url: str = "") -> None:
+        self._url = url.strip()
+        self._conn: Any = None  # sqlite3.Connection | psycopg2 connection
+
+    @property
+    def engine(self) -> str:
+        return "postgres" if self._url.startswith("postgres") else "sqlite"
+
+    def _prepare_sql(self, sql: str) -> str:
+        """Translate SQLite `?` placeholders to psycopg2 `%s` for PostgreSQL."""
+        if self.engine == "postgres":
+            return sql.replace("?", "%s")
+        return sql
+
+    def _ensure_conn(self) -> Any:
+        if self._conn is not None:
+            return self._conn
+        if self.engine == "postgres":
+            import psycopg2
+
+            self._conn = psycopg2.connect(self._url)
+            self._conn.autocommit = True
+        else:
+            # SQLite: stored under ./data/bot_state.db
+            from pathlib import Path
+
+            db_path = Path(__file__).resolve().parent.parent / "data" / "bot_state.db"
+            db_path.parent.mkdir(parents=True, exist_ok=True)
+            self._conn = sqlite3.connect(db_path)
+            self._conn.row_factory = sqlite3.Row
+        return self._conn
+
+    # ── Helpers for unified execute/query ───────────────────────────
+    def execute(self, sql: str, params: tuple = ()) -> Any:
+        conn = self._ensure_conn()
+        cur = conn.cursor()
+        cur.execute(self._prepare_sql(sql), params)
+        self._close_cursor(cur)
+        return cur
+
+    def query(self, sql: str, params: tuple = ()) -> list[dict[str, Any]]:
+        conn = self._ensure_conn()
+        cur = conn.cursor()
+        cur.execute(self._prepare_sql(sql), params)
+        if self.engine == "postgres":
+            cols = [d.name for d in cur.description] if cur.description else []
+            rows = [dict(zip(cols, row)) for row in cur.fetchall()]
+        else:
+            rows = [dict(r) for r in cur.fetchall()]
+        self._close_cursor(cur)
+        return rows
+
+    def query_one(self, sql: str, params: tuple = ()) -> Optional[dict[str, Any]]:
+        rows = self.query(sql, params)
+        return rows[0] if rows else None
+
+    def _close_cursor(self, cur: Any) -> None:
+        try:
+            cur.close()
+        except Exception:
+            pass
 
 
-def _get_conn() -> sqlite3.Connection:
-    """Get a SQLite connection with row factory."""
-    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    return conn
+# ── Global DB instance (choose backend from settings) ──────────────────
+db = Database(url=settings.database_url)
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _dumps(value: Any) -> str:
+    return json.dumps(value, ensure_ascii=False, default=str)
+
+
+def _loads(value: Optional[str], default: Any = None) -> Any:
+    if value is None:
+        return default
+    try:
+        return json.loads(value)
+    except (ValueError, TypeError):
+        return default
+
+
+# ── Schema ──────────────────────────────────────────────────────────────
+
+
+def _autoinc_primary_key() -> str:
+    """Return engine-specific autoincrement INTEGER PRIMARY KEY clause."""
+    if db.engine == "postgres":
+        return "id SERIAL PRIMARY KEY"
+    return "id INTEGER PRIMARY KEY AUTOINCREMENT"
 
 
 def init_db() -> None:
-    """Create tables if they don't exist."""
-    with _get_conn() as conn:
-        conn.executescript("""
-            CREATE TABLE IF NOT EXISTS bot_state (
-                key TEXT PRIMARY KEY,
-                value TEXT NOT NULL,
-                updated_at TEXT NOT NULL
-            );
-
-            CREATE TABLE IF NOT EXISTS cycle_history (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                timestamp TEXT NOT NULL,
-                source TEXT NOT NULL,
-                duration_ms REAL NOT NULL,
-                status TEXT NOT NULL,
-                evaluations TEXT NOT NULL,
-                trades TEXT NOT NULL,
-                adjustments TEXT NOT NULL,
-                skipped INTEGER NOT NULL DEFAULT 0,
-                error TEXT,
-                reason TEXT
-            );
-
-            CREATE TABLE IF NOT EXISTS open_positions (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id TEXT NOT NULL,
-                position_id INTEGER NOT NULL,
-                entry_price REAL NOT NULL,
-                stop_loss REAL,
-                take_profit REAL,
-                is_buy INTEGER NOT NULL,
-                breakeven_applied INTEGER NOT NULL DEFAULT 0,
-                opened_at TEXT NOT NULL,
-                UNIQUE(user_id, position_id)
-            );
-        """)
-
-        # Migration: add `reason` column to existing cycle_history tables
-        try:
-            conn.execute("ALTER TABLE cycle_history ADD COLUMN reason TEXT")
-        except sqlite3.OperationalError:
-            pass  # Column already exists
-
-    logger.info("Bot state database initialized at %s", DB_PATH)
+    """Create tables if they don't exist (portable schema)."""
+    db.execute("""
+        CREATE TABLE IF NOT EXISTS bot_state (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+    """)
+    db.execute("""
+        CREATE TABLE IF NOT EXISTS bot_runs (
+            id           TEXT PRIMARY KEY,
+            started_at   TEXT NOT NULL,
+            stopped_at   TEXT,
+            status       TEXT NOT NULL DEFAULT 'active',
+            cycles_count INTEGER NOT NULL DEFAULT 0,
+            created_at   TEXT NOT NULL
+        )
+    """)
+    db.execute("""
+        CREATE TABLE IF NOT EXISTS bot_cycles (
+            id          TEXT PRIMARY KEY,
+            run_id      TEXT NOT NULL,
+            timestamp   TEXT NOT NULL,
+            source      TEXT NOT NULL DEFAULT 'auto',
+            duration_ms REAL NOT NULL,
+            status      TEXT NOT NULL DEFAULT 'success',
+            evaluations TEXT NOT NULL DEFAULT '[]',
+            trades      TEXT NOT NULL DEFAULT '[]',
+            adjustments TEXT NOT NULL DEFAULT '[]',
+            skipped     INTEGER NOT NULL DEFAULT 0,
+            error       TEXT,
+            reason      TEXT
+        )
+    """)
+    db.execute("""
+        CREATE INDEX IF NOT EXISTS idx_bot_cycles_run
+        ON bot_cycles(run_id)
+    """)
+    db.execute(f"""
+        CREATE TABLE IF NOT EXISTS open_positions (
+            {_autoinc_primary_key()},
+            user_id TEXT NOT NULL,
+            position_id INTEGER NOT NULL,
+            entry_price REAL NOT NULL,
+            stop_loss REAL,
+            take_profit REAL,
+            is_buy INTEGER NOT NULL,
+            breakeven_applied INTEGER NOT NULL DEFAULT 0,
+            opened_at TEXT NOT NULL,
+            UNIQUE(user_id, position_id)
+        )
+    """)
+    # Legacy: add `reason` column if missing (old cycle_history renamed)
+    try:
+        db.execute("ALTER TABLE bot_cycles ADD COLUMN reason TEXT")
+    except Exception:
+        pass
+    logger.info("Database initialized (engine=%s)", db.engine)
 
 
 # ── Bot State ───────────────────────────────────────────────────────────
 
 
 def save_bot_state(key: str, value: Any) -> None:
-    """Save a key-value pair to the bot state table."""
-    with _get_conn() as conn:
-        conn.execute(
-            """
-            INSERT INTO bot_state (key, value, updated_at)
-            VALUES (?, ?, ?)
-            ON CONFLICT(key) DO UPDATE SET
-                value = excluded.value,
-                updated_at = excluded.updated_at
-            """,
-            (key, json.dumps(value), datetime.now(timezone.utc).isoformat()),
-        )
+    db.execute(
+        """
+        INSERT INTO bot_state (key, value, updated_at)
+        VALUES (?, ?, ?)
+        ON CONFLICT(key) DO UPDATE SET
+            value = excluded.value,
+            updated_at = excluded.updated_at
+        """,
+        (key, _dumps(value), _now_iso()),
+    )
 
 
 def load_bot_state(key: str, default: Any = None) -> Any:
-    """Load a key-value pair from the bot state table."""
-    with _get_conn() as conn:
-        row = conn.execute(
-            "SELECT value FROM bot_state WHERE key = ?", (key,)
-        ).fetchone()
+    row = db.query_one("SELECT value FROM bot_state WHERE key = ?", (key,))
     if row is None:
         return default
-    try:
-        return json.loads(row["value"])
-    except (json.JSONDecodeError, TypeError):
-        return default
+    return _loads(row["value"], default)
 
 
-# ── Cycle History ───────────────────────────────────────────────────────
+# ── Bot Runs (executions) ───────────────────────────────────────────────
 
 
-def save_cycle(cycle: dict[str, Any]) -> None:
-    """Persist a single cycle entry to the database."""
-    with _get_conn() as conn:
-        conn.execute(
-            """
-            INSERT INTO cycle_history (
-                timestamp, source, duration_ms, status,
-                evaluations, trades, adjustments, skipped, error, reason
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                cycle.get("timestamp", datetime.now(timezone.utc).isoformat()),
-                cycle.get("source", "auto"),
-                cycle.get("duration_ms", 0),
-                cycle.get("status", "success"),
-                json.dumps(cycle.get("evaluations", [])),
-                json.dumps(cycle.get("trades", [])),
-                json.dumps(cycle.get("adjustments", [])),
-                1 if cycle.get("skipped", False) else 0,
-                cycle.get("error"),
-                cycle.get("reason"),
-            ),
-        )
+def start_run() -> str:
+    """Start a new execution record and return its UUID id."""
+    run_id = str(uuid.uuid4())
+    db.execute(
+        """
+        INSERT INTO bot_runs (id, started_at, stopped_at, status, cycles_count, created_at)
+        VALUES (?, ?, NULL, 'active', 0, ?)
+        """,
+        (run_id, _now_iso(), _now_iso()),
+    )
+    logger.info("New bot run started: %s", run_id)
+    return run_id
+
+
+def finish_run(run_id: Optional[str], status: str = "stopped") -> None:
+    """Stop an execution (stopped or crashed)."""
+    if not run_id:
+        return
+    db.execute(
+        "UPDATE bot_runs SET stopped_at = ?, status = ? WHERE id = ?",
+        (_now_iso(), status, run_id),
+    )
+    logger.info("Bot run %s finished with status=%s", run_id, status)
+
+
+def mark_crashed_runs() -> None:
+    """Mark any 'active' runs (no stopped_at) as crashed (e.g. after restart)."""
+    db.execute(
+        "UPDATE bot_runs SET status = 'crashed', stopped_at = ? WHERE status = 'active' AND stopped_at IS NULL",
+        (_now_iso(),),
+    )
+
+
+def increment_run_cycles(run_id: Optional[str]) -> None:
+    if not run_id:
+        return
+    db.execute(
+        "UPDATE bot_runs SET cycles_count = cycles_count + 1 WHERE id = ?",
+        (run_id,),
+    )
+
+
+# ── Cycles ──────────────────────────────────────────────────────────────
+
+
+def save_cycle(cycle: dict[str, Any], run_id: Optional[str] = None) -> None:
+    """Persist one cycle entry, associated with the given run (if any)."""
+    db.execute(
+        """
+        INSERT INTO bot_cycles (
+            id, run_id, timestamp, source, duration_ms, status,
+            evaluations, trades, adjustments, skipped, error, reason
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            str(uuid.uuid4()),
+            run_id,
+            cycle.get("timestamp", _now_iso()),
+            cycle.get("source", "auto"),
+            cycle.get("duration_ms", 0),
+            cycle.get("status", "success"),
+            _dumps(cycle.get("evaluations", [])),
+            _dumps(cycle.get("trades", [])),
+            _dumps(cycle.get("adjustments", [])),
+            1 if cycle.get("skipped", False) else 0,
+            cycle.get("error"),
+            cycle.get("reason"),
+        ),
+    )
 
 
 def load_cycle_history(limit: int = 20) -> list[dict[str, Any]]:
-    """Load recent cycle history from the database (most recent first)."""
-    with _get_conn() as conn:
-        rows = conn.execute(
-            """
-            SELECT * FROM cycle_history
-            ORDER BY id DESC
-            LIMIT ?
-            """,
-            (limit,),
-        ).fetchall()
-
-    cycles: list[dict[str, Any]] = []
+    """Load recent cycles (most recent first)."""
+    rows = db.query(
+        """
+        SELECT * FROM bot_cycles
+        ORDER BY timestamp DESC
+        LIMIT ?
+        """,
+        (limit,),
+    )
+    cycles = []
     for row in rows:
-        cycles.append({
-            "timestamp": row["timestamp"],
-            "source": row["source"],
-            "duration_ms": row["duration_ms"],
-            "status": row["status"],
-            "evaluations": json.loads(row["evaluations"] or "[]"),
-            "trades": json.loads(row["trades"] or "[]"),
-            "adjustments": json.loads(row["adjustments"] or "[]"),
-            "skipped": bool(row["skipped"]),
-            "error": row["error"],
-            "reason": row["reason"],
-        })
+        cycles.append(_row_to_cycle(row))
     return cycles
+
+
+def load_cycles_by_run(run_id: str, limit: int = 100) -> list[dict[str, Any]]:
+    """Load cycles belonging to a specific run (most recent first)."""
+    rows = db.query(
+        """
+        SELECT * FROM bot_cycles
+        WHERE run_id = ?
+        ORDER BY timestamp DESC
+        LIMIT ?
+        """,
+        (run_id, limit),
+    )
+    return [_row_to_cycle(r) for r in rows]
+
+
+def load_runs(limit: int = 10) -> list[dict[str, Any]]:
+    """Load recent executions (most recent first)."""
+    rows = db.query(
+        """
+        SELECT id, started_at, stopped_at, status, cycles_count
+        FROM bot_runs
+        ORDER BY started_at DESC
+        LIMIT ?
+        """,
+        (limit,),
+    )
+    return [dict(r) for r in rows]
+
+
+def _row_to_cycle(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": row.get("id"),
+        "run_id": row.get("run_id"),
+        "timestamp": row.get("timestamp"),
+        "source": row.get("source"),
+        "duration_ms": row.get("duration_ms"),
+        "status": row.get("status"),
+        "evaluations": _loads(row.get("evaluations"), []),
+        "trades": _loads(row.get("trades"), []),
+        "adjustments": _loads(row.get("adjustments"), []),
+        "skipped": bool(row.get("skipped")),
+        "error": row.get("error"),
+        "reason": row.get("reason"),
+    }
 
 
 # ── Open Positions ──────────────────────────────────────────────────────
 
 
 def save_position(user_id: str, position: dict[str, Any]) -> None:
-    """Persist an open position to the database."""
-    with _get_conn() as conn:
-        conn.execute(
-            """
-            INSERT INTO open_positions (
-                user_id, position_id, entry_price, stop_loss, take_profit,
-                is_buy, breakeven_applied, opened_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(user_id, position_id) DO UPDATE SET
-                entry_price = excluded.entry_price,
-                stop_loss = excluded.stop_loss,
-                take_profit = excluded.take_profit,
-                is_buy = excluded.is_buy,
-                breakeven_applied = excluded.breakeven_applied,
-                opened_at = excluded.opened_at
-            """,
-            (
-                user_id,
-                position.get("position_id"),
-                position.get("entry_price", 0),
-                position.get("stop_loss"),
-                position.get("take_profit"),
-                1 if position.get("is_buy", False) else 0,
-                1 if position.get("breakeven_applied", False) else 0,
-                position.get("opened_at", datetime.now(timezone.utc).isoformat()),
-            ),
-        )
+    db.execute(
+        """
+        INSERT INTO open_positions (
+            user_id, position_id, entry_price, stop_loss, take_profit,
+            is_buy, breakeven_applied, opened_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(user_id, position_id) DO UPDATE SET
+            entry_price = excluded.entry_price,
+            stop_loss = excluded.stop_loss,
+            take_profit = excluded.take_profit,
+            is_buy = excluded.is_buy,
+            breakeven_applied = excluded.breakeven_applied,
+            opened_at = excluded.opened_at
+        """,
+        (
+            user_id,
+            position.get("position_id"),
+            position.get("entry_price", 0),
+            position.get("stop_loss"),
+            position.get("take_profit"),
+            1 if position.get("is_buy", False) else 0,
+            1 if position.get("breakeven_applied", False) else 0,
+            position.get("opened_at", _now_iso()),
+        ),
+    )
 
 
 def update_position_breakeven(user_id: str, position_id: int, stop_loss: float) -> None:
-    """Update a position's stop loss and mark breakeven as applied."""
-    with _get_conn() as conn:
-        conn.execute(
-            """
-            UPDATE open_positions
-            SET stop_loss = ?, breakeven_applied = 1
-            WHERE user_id = ? AND position_id = ?
-            """,
-            (stop_loss, user_id, position_id),
-        )
+    db.execute(
+        """
+        UPDATE open_positions
+        SET stop_loss = ?, breakeven_applied = 1
+        WHERE user_id = ? AND position_id = ?
+        """,
+        (stop_loss, user_id, position_id),
+    )
 
 
 def load_open_positions() -> dict[str, list[dict[str, Any]]]:
-    """Load all open positions from the database, grouped by user."""
-    with _get_conn() as conn:
-        rows = conn.execute(
-            "SELECT * FROM open_positions ORDER BY opened_at DESC"
-        ).fetchall()
-
+    rows = db.query("SELECT * FROM open_positions ORDER BY opened_at DESC")
     positions: dict[str, list[dict[str, Any]]] = {}
     for row in rows:
         user_id = row["user_id"]
@@ -227,6 +394,4 @@ def load_open_positions() -> dict[str, list[dict[str, Any]]]:
 
 
 def clear_positions() -> None:
-    """Clear all open positions (e.g., on bot stop)."""
-    with _get_conn() as conn:
-        conn.execute("DELETE FROM open_positions")
+    db.execute("DELETE FROM open_positions")

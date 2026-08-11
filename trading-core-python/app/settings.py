@@ -3,6 +3,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
     users_config_api_url: str = "http://localhost:8080"
+    database_url: str = ""
 
     # ── Trading Cycle ─────────────────────────────────────────────────
     trading_interval_seconds: int = 300  # 5 minutes default

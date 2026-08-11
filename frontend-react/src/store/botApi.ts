@@ -6,12 +6,31 @@ import { tradingCoreUrl } from "../config";
 // browser bundle. In local dev (Vite) the proxy rewrites /trading-core ->
 // http://localhost:8000.
 
+export type BotStrategy = { id: string; name: string; symbol: string; is_default: boolean };
+
 export type BotStatus = {
   running: boolean;
   interval_seconds: number;
   cycles_completed: number;
   last_run: string | null;
   next_run: string | null;
+  strategy?: BotStrategy;
+  run_id?: string | null;
+};
+
+export type BotRun = {
+  id: string;
+  started_at: string;
+  stopped_at: string | null;
+  status: string;
+  cycles_count: number;
+  cycles?: CycleHistoryEntry[];
+};
+
+export type BotCyclesResponse = {
+  runs: BotRun[];
+  recent_cycles: CycleHistoryEntry[];
+  open_positions: Record<string, OpenPosition[]>;
 };
 
 export type CycleResult = {
@@ -70,11 +89,6 @@ export type OpenPosition = {
   is_buy: boolean;
   breakeven_applied: boolean;
   opened_at: string;
-};
-
-export type BotCyclesResponse = {
-  cycles: CycleHistoryEntry[];
-  open_positions: Record<string, OpenPosition[]>;
 };
 
 export type CandlePoint = {
