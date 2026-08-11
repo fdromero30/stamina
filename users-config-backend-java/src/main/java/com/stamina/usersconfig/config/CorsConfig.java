@@ -23,7 +23,13 @@ public class CorsConfig {
             public void addCorsMappings(CorsRegistry registry) {
                 String[] origins;
                 if (allowedOrigins == null || allowedOrigins.isBlank()) {
-                    origins = new String[]{"http://localhost:*", "http://127.0.0.1:*"};
+                    // Default: local dev + Render `.onrender.com` origins.
+                    // En producción se puede sobreescribir con CORS_ALLOWED_ORIGINS.
+                    origins = new String[]{
+                        "http://localhost:*",
+                        "http://127.0.0.1:*",
+                        "https://*.onrender.com"
+                    };
                 } else {
                     origins = allowedOrigins.split(",");
                 }

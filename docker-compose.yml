@@ -81,8 +81,14 @@ services:
       context: ./frontend-react
     restart: unless-stopped
     environment:
+      # ── Modo local por defecto: Nginx proxya a backends de la red Docker
       USERS_CONFIG_API_URL: http://users-config-backend:8080
       TRADING_CORE_API_URL: http://trading-core:8000
+      # ── Modo "pegarle a producción": el navegador local llama directo a Render
+      #    (CORS ya habilitado en el backend de Render).
+      #    Activar con USE_PRODUCTION_BACKEND=true en .env
+      VITE_USERS_CONFIG_API_URL: ${VITE_USERS_CONFIG_API_URL:-/api}
+      VITE_TRADING_CORE_URL: ${VITE_TRADING_CORE_URL:-/trading-core}
     depends_on:
       - trading-core
       - users-config-backend

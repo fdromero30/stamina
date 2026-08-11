@@ -26,9 +26,18 @@ if [ "${RENDER:-}" = "true" ] || [ "${PORT:-80}" != "80" ]; then
   BROWSER_USERS_URL="${VITE_USERS_CONFIG_API_URL:-${USERS_CONFIG_API_URL}}"
   BROWSER_TRADING_URL="${VITE_TRADING_CORE_URL:-${TRADING_CORE_API_URL}}"
 else
-  # On local, the browser uses relative paths proxied by Nginx
-  [ -z "$BROWSER_USERS_URL" ] && BROWSER_USERS_URL="/api"
-  [ -z "$BROWSER_TRADING_URL" ] && BROWSER_TRADING_URL="/trading-core"
+  # On local: default to relative paths proxied by Nginx,
+  # BUT allow override to a production backend via VITE_* absolute URLs:
+  #   VITE_USERS_CONFIG_API_URL=https://users-config-backend.onrender.com
+  #   VITE_TRADING_CORE_URL=https://trading-core.onrender.com
+  case "$BROWSER_USERS_URL" in
+    http://*|https://*) ;;                      # absolute URL → use as-is
+    *) BROWSER_USERS_URL="/api" ;;              # otherwise proxy via Nginx
+  esac
+  case "$BROWSER_TRADING_URL" in
+    http://*|https://*) ;;                      # absolute URL → use as-is
+    *) BROWSER_TRADING_URL="/trading-core" ;;   # otherwise proxy via Nginx
+  esac
 fi
 
 cat > /usr/share/nginx/html/config.js <<EOF
