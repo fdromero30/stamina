@@ -14,11 +14,20 @@ fi
 # Sin estos, si Render no tiene las variables en el dashboard, Nginx usa
 # los defaults del Dockerfile (http://users-config-backend:8080) que son
 # hostnames de Docker Compose y NO existen en Render → 502.
-if [ -z "${USERS_CONFIG_API_URL:-}" ]; then
+#
+# IMPORTANTE: En RENDER forzamos SIEMPRE las URLs correctas, sin importar
+# lo que tenga el dashboard de Render (puede tener valores viejos que ya
+# no existen → 502). Si el nombre del servicio cambia, se actualiza aquí.
+if [ "${RENDER:-}" = "true" ] || [ "${PORT:-80}" != "80" ]; then
   USERS_CONFIG_API_URL="https://users-config-backend.onrender.com"
-fi
-if [ -z "${TRADING_CORE_API_URL:-}" ]; then
   TRADING_CORE_API_URL="https://trading-core-qthd.onrender.com"
+else
+  if [ -z "${USERS_CONFIG_API_URL:-}" ]; then
+    USERS_CONFIG_API_URL="https://users-config-backend.onrender.com"
+  fi
+  if [ -z "${TRADING_CORE_API_URL:-}" ]; then
+    TRADING_CORE_API_URL="https://trading-core-qthd.onrender.com"
+  fi
 fi
 export USERS_CONFIG_API_URL TRADING_CORE_API_URL
 
