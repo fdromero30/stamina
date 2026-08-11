@@ -67,13 +67,13 @@ services:
     healthCheckPath: /
     envVars:
       # RENDER=true es detectado por entrypoint.sh para usar el template
-      # de red interna (HTTP directo al servicio, sin handshake SSL).
+      # de red interna con HTTPS y SNI habilitado.
       - key: RENDER
         value: "true"
-      # Comunicación INTERNA entre servicios: HTTP directo al hostname
-      # del servicio (evita el 502 Bad Gateway por handshake SSL a la
-      # IP pública compartida de Render).
+      # Comunicación INTERNA entre servicios: HTTPS con SNI.
+      # Render redirige HTTP→HTTPS en *.onrender.com, así que usamos
+      # HTTPS directamente + proxy_ssl_server_name on en Nginx.
       - key: USERS_CONFIG_API_URL
-        value: http://users-config-backend.onrender.com
+        value: https://users-config-backend.onrender.com
       - key: TRADING_CORE_API_URL
-        value: http://trading-core.onrender.com
+        value: https://trading-core.onrender.com
