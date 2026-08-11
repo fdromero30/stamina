@@ -154,6 +154,7 @@ class StrategyConfigServiceTest {
             null, null, null, null,
             null, null, null, null,
             null, null, null, null,
+            null, null, null, null, null, null, null, null, null, null,
             false, null
         );
         when(userRepository.findById(userId)).thenReturn(Optional.of(testUser));
@@ -174,6 +175,7 @@ class StrategyConfigServiceTest {
             null, null, null, null,
             null, null, null, null,
             null, null, null, null,
+            null, null, null, null, null, null, null, null, null, null,
             false, null
         );
         when(userRepository.findById(userId)).thenReturn(Optional.empty());
@@ -200,6 +202,7 @@ class StrategyConfigServiceTest {
             new BigDecimal("10.0"), new BigDecimal("2.0"), new BigDecimal("5.0"), 3,
             slTypeId, new BigDecimal("1.5"), new BigDecimal("3.0"), new BigDecimal("0.001"),
             LocalTime.of(9, 30), LocalTime.of(16, 0), new BigDecimal("2.0"), new BigDecimal("1.0"),
+            null, null, null, null, null, null, null, null, null, null,
             true, mlId
         );
         when(userRepository.findById(userId)).thenReturn(Optional.of(testUser));
@@ -256,6 +259,7 @@ class StrategyConfigServiceTest {
             null, null, null, null,
             null, null, null, null,
             null, null, null, null,
+            null, null, null, null, null, null, null, null, null, null,
             null, null
         );
         when(strategyRepository.findById(strategyId)).thenReturn(Optional.of(existing));
@@ -280,6 +284,7 @@ class StrategyConfigServiceTest {
             null, null, null, null,
             null, null, null, null,
             null, null, null, null,
+            null, null, null, null, null, null, null, null, null, null,
             null, null
         ))).isInstanceOf(ResponseStatusException.class)
           .hasMessageContaining("Strategy not found");

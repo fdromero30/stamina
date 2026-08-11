@@ -81,6 +81,7 @@ class StrategyConfigControllerTest {
             null, null, null, null,
             null, null, null, null,
             null, null, null, null,
+            null, null, null, null, null, null, null, null, null, null,
             false, null
         );
 
@@ -101,6 +102,7 @@ class StrategyConfigControllerTest {
             new BigDecimal("15.0"), new BigDecimal("2.5"), new BigDecimal("5.0"), 5,
             slType.getId(), new BigDecimal("2.0"), new BigDecimal("4.0"), new BigDecimal("0.0005"),
             LocalTime.of(8, 0), LocalTime.of(18, 0), new BigDecimal("3.0"), new BigDecimal("1.5"),
+            null, null, null, null, null, null, null, null, null, null,
             false, null
         );
 
@@ -129,6 +131,7 @@ class StrategyConfigControllerTest {
             null, null, null, null,
             null, null, null, null,
             null, null, null, null,
+            null, null, null, null, null, null, null, null, null, null,
             true, mlStrategy.getId()
         );
 
@@ -148,6 +151,7 @@ class StrategyConfigControllerTest {
             null, null, null, null,
             null, null, null, null,
             null, null, null, null,
+            null, null, null, null, null, null, null, null, null, null,
             false, null
         );
 
@@ -167,6 +171,7 @@ class StrategyConfigControllerTest {
             null, null, null, null,
             null, null, null, null,
             null, null, null, null,
+            null, null, null, null, null, null, null, null, null, null,
             null, null
         );
 
