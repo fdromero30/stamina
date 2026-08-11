@@ -1,12 +1,4 @@
 # Render Blueprint — render.yaml
-# El repo de GitHub es https://github.com/fdromero30/stamina
-# El proyecto vive EN LA RAÍZ del repo (los Dockerfiles están a nivel raíz).
-#
-# Base de datos: SUPABASE (no Render-managed).
-# Las credenciales de Supabase (SPRING_DATASOURCE_URL / USERNAME / PASSWORD)
-# están con `sync: false` → se configuran en el dashboard de Render, nunca
-# en el repo.
-
 services:
   # ── 1. Backend Java (Spring Boot) ────────────────────────────────
   - type: web
@@ -17,16 +9,7 @@ services:
     dockerfilePath: Dockerfile
     healthCheckPath: /health
     envVars:
-      # ── Supabase (PostgreSQL) ─────────────────────────────────
-      # Se completan desde el panel de Render > Environment.
-      # IMPORTANTE: Usa el TRANSACTION POOLER (no el host directo
-      # db.<ref>.supabase.co que falla por routing IPv4/IPv6).
-      #
-      # Valores verificados en DBeaver:
-      #   SPRING_DATASOURCE_URL      = jdbc:postgresql://aws-1-us-west-2.pooler.supabase.com:6543/postgres?sslmode=require
-      #   SPRING_DATASOURCE_USERNAME = postgres.ifbrxvkmeiburqagskjs
-      #   SPRING_DATASOURCE_PASSWORD = password de Supabase
-      #   SPRING_DATASOURCE_DRIVER   = org.postgresql.Driver (auto)
+      # Supabase (transaction pooler) — configura en dashboard Render
       - key: SPRING_DATASOURCE_URL
         sync: false
       - key: SPRING_DATASOURCE_USERNAME
@@ -51,9 +34,9 @@ services:
     dockerfilePath: Dockerfile
     healthCheckPath: /health
     envVars:
-      # Comunicación INTERNA con el backend (HTTP, sin SSL)
+      # Hostname interno de Render (sin puerto — Render resuelve el puerto)
       - key: USERS_CONFIG_API_URL
-        value: http://users-config-backend.onrender.com
+        value: http://users-config-backend
       - key: BOT_API_TOKEN
         generateValue: true
 
@@ -66,14 +49,11 @@ services:
     dockerfilePath: Dockerfile
     healthCheckPath: /
     envVars:
-      # RENDER=true es detectado por entrypoint.sh para usar el template
-      # de red interna con HTTPS y SNI habilitado.
+      # Detectado por entrypoint.sh para template de hostname interno
       - key: RENDER
         value: "true"
-      # Comunicación INTERNA entre servicios: HTTPS con SNI.
-      # Render redirige HTTP→HTTPS en *.onrender.com, así que usamos
-      # HTTPS directamente + proxy_ssl_server_name on en Nginx.
+      # Hostnames internos: Render resuelve el puerto automáticamente
       - key: USERS_CONFIG_API_URL
-        value: https://users-config-backend.onrender.com
+        value: http://users-config-backend
       - key: TRADING_CORE_API_URL
-        value: https://trading-core.onrender.com
+        value: http://trading-core
