@@ -12,6 +12,7 @@ from app.bot.signals import (
     SignalAction,
     Candle,
     MarketData,
+    StrategyConfig,
     evaluate_ma_strategy,
     calculate_breakeven_stop_loss,
     calculate_take_profit,
@@ -22,6 +23,7 @@ from app.integrations.market_data_client import MarketDataClient
 from app.integrations.orders_client import EtoroHttpClient
 from app.integrations.strategies_client import StrategiesClient, StrategyConfigDTO
 from app.integrations.symbol_resolver import SymbolResolver
+from app.risk import PositionRiskManager, PositionRiskState
 from app.settings import settings
 
 logger = logging.getLogger(__name__)
@@ -68,6 +70,14 @@ class TradingBotEngine:
 
         # Restore persisted open positions
         self._open_positions = persistence.load_open_positions()
+
+        # Transversal risk manager — reuse any strategy's positions
+        self._risk_manager = PositionRiskManager(
+            etoro_http_client=self._etoro_http_client,
+            market_data_client=self._market_data_client,
+            candle_interval=settings.default_candle_interval,
+            candle_count=settings.default_candle_count,
+        )
 
     @property
     def open_positions(self) -> dict[str, list[dict[str, Any]]]:
@@ -179,8 +189,9 @@ class TradingBotEngine:
                     results=results,
                 )
 
-            # 5. Check open positions for breakeven adjustments
-            await self._check_breakeven_adjustments(results)
+            # 5. Check open positions for risk-state adjustments (breakeven,
+            #    secured profits, trailing ATR) — transversal risk module.
+            await self._check_risk_adjustments(results)
 
         except Exception:
             logger.exception("Fatal error in trading cycle")
@@ -250,7 +261,11 @@ class TradingBotEngine:
             }
 
             current = self._open_positions.get(user_id, [])
-            current_by_id = {int(p["position_id"]): p for p in current}
+            current_by_id = {
+                int(p["position_id"]): p
+                for p in current
+                if p.get("position_id") is not None
+            }
 
             # Local positions no longer open in eToro → remove
             removed_ids = [
@@ -262,12 +277,19 @@ class TradingBotEngine:
                     len(removed_ids), user_id, removed_ids,
                 )
                 self._open_positions[user_id] = [
-                    p for p in current if int(p.get("position_id")) not in removed_ids
+                    p
+                    for p in current
+                    if p.get("position_id") is not None
+                    and int(p["position_id"]) not in removed_ids
                 ]
 
             # Bring in new positions that eToro has but we don't
             kept = self._open_positions.get(user_id, [])
-            known_ids = {int(p["position_id"]) for p in kept}
+            known_ids = {
+                int(p["position_id"])
+                for p in kept
+                if p.get("position_id") is not None
+            }
 
             for pid, ep in etoro_by_id.items():
                 if pid in known_ids:
@@ -278,7 +300,10 @@ class TradingBotEngine:
                     continue
 
                 is_buy = bool(ep.get("isBuy", False))
-                instrument_id = int(ep.get("instrumentID"))
+                raw_instrument = ep.get("instrumentID")
+                if raw_instrument is None:
+                    continue
+                instrument_id = int(raw_instrument)
                 opened_at = ep.get("openDateTime") or datetime.now(timezone.utc).isoformat()
 
                 # Recalculate SL/TP with the bot's logic from current candles
@@ -643,101 +668,113 @@ class TradingBotEngine:
             "is_buy": is_buy,
             "breakeven_applied": False,
             "opened_at": datetime.now(timezone.utc).isoformat(),
+            # Risk state machine fields
+            "state": 0,
+            "sl_original": stop_loss,
+            "tp_fixed": take_profit,
+            "highest_price": None,
+            "lowest_price": None,
+            "spread_real": None,
         }
         self._open_positions[user_id].append(position)
 
         # Persist to database
         persistence.save_position(user_id, position)
 
-    async def _check_breakeven_adjustments(
+    async def _check_risk_adjustments(
         self,
         results: dict[str, Any],
     ) -> None:
         """
-        Check all open positions to see if they've reached the breakeven trigger.
-        If a position has reached 1.5:1 risk:reward, move SL to breakeven.
+        Check all open positions through the transversal risk module.
+
+        For each open position, delegate to PositionRiskManager which:
+        - Reads currentRate from the broker
+        - Detects milestones (Hito 1 breakeven, Hito 2 secured + trailing)
+        - Executes SL/TP updates against eToro (with retry)
+        - Only after broker confirmation updates the local state
         """
         for user_id, positions in list(self._open_positions.items()):
             for pos in positions:
-                if pos.get("breakeven_applied"):
+                position_id = pos.get("position_id")
+                if position_id is None:
                     continue
-
                 try:
-                    # Fetch current rate to check P&L
-                    portfolio = await self._etoro_http_client.get_portfolio(user_id)
-                    # We'd need to check the position's current P&L here
-                    # For now, use a simplified approach: check via portfolio endpoint
+                    state = PositionRiskState(
+                        position_id=int(position_id),
+                        user_id=user_id,
+                        entry_price=pos["entry_price"],
+                        sl_original=pos.get("sl_original") or pos["stop_loss"],
+                        tp_fixed=pos.get("tp_fixed"),
+                        is_buy=pos["is_buy"],
+                        state=pos.get("state", 0),
+                        highest_price=pos.get("highest_price"),
+                        lowest_price=pos.get("lowest_price"),
+                        sl_current=pos.get("stop_loss"),
+                        spread_real=pos.get("spread_real"),
+                    )
 
-                    if self._should_apply_breakeven(pos, portfolio):
-                        # Calculate breakeven SL
-                        be_sl = calculate_breakeven_stop_loss(
-                            entry_price=pos["entry_price"],
-                            spread=0.0001,  # EUR/USD typical spread
-                            is_buy=pos["is_buy"],
-                        )
+                    instrument_id = await self._resolve_instrument_id(
+                        user_id, self._symbol_for_position(pos)
+                    )
+                    if instrument_id is None:
+                        continue
 
-                        # Update SL via Java backend
-                        async with httpx.AsyncClient(timeout=15) as client:
-                            await client.put(
-                                f"{self._base_url}/etoro/trading/stop-loss/{pos['position_id']}",
-                                params={"userId": user_id, "stopLoss": be_sl},
-                            )
+                    decision = await self._risk_manager.manage_position(
+                        position=state,
+                        instrument_id=instrument_id,
+                    )
+                    if decision is None:
+                        continue
 
-                        pos["stop_loss"] = be_sl
-                        pos["breakeven_applied"] = True
-                        results["adjustments"].append({
-                            "position_id": pos["position_id"],
-                            "action": "breakeven",
-                            "new_stop_loss": be_sl,
-                            "user_id": user_id,
-                        })
+                    # Broker confirmed → update local state + persistence
+                    new_sl = decision.new_stop_loss
+                    pos["stop_loss"] = new_sl if new_sl is not None else pos.get("stop_loss")
+                    pos["state"] = decision.new_state
+                    if decision.spread_real is not None:
+                        pos["spread_real"] = decision.spread_real
+                    if decision.highest_price is not None:
+                        pos["highest_price"] = decision.highest_price
+                    if decision.lowest_price is not None:
+                        pos["lowest_price"] = decision.lowest_price
+                    pos["breakeven_applied"] = decision.new_state >= 1
 
-                        # Persist breakeven update to database
-                        persistence.update_position_breakeven(
-                            user_id=user_id,
-                            position_id=pos["position_id"],
-                            stop_loss=be_sl,
-                        )
-                        logger.info(
-                            "Breakeven applied to position %d for user %s",
-                            pos["position_id"],
-                            user_id,
-                        )
+                    persistence.update_position_state(
+                        user_id=user_id,
+                        position_id=int(position_id),
+                        state=decision.new_state,
+                        stop_loss=pos["stop_loss"],
+                        take_profit=pos.get("take_profit"),
+                        highest_price=pos.get("highest_price"),
+                        lowest_price=pos.get("lowest_price"),
+                        spread_real=pos.get("spread_real"),
+                    )
+
+                    results["adjustments"].append({
+                        "position_id": position_id,
+                        "action": "risk_state",
+                        "new_state": decision.new_state,
+                        "new_stop_loss": pos["stop_loss"],
+                        "reason": decision.reason,
+                        "user_id": user_id,
+                    })
+                    logger.info(
+                        "Risk state %d applied to position %d for user %s: %s",
+                        decision.new_state, position_id, user_id, decision.reason,
+                    )
 
                 except Exception as e:
                     logger.warning(
-                        "Failed to check breakeven for position %d: %s",
-                        pos.get("position_id"),
-                        e,
+                        "Failed to check risk for position %d: %s",
+                        position_id, e,
                     )
 
-    def _should_apply_breakeven(
-        self,
-        position: dict[str, Any],
-        portfolio: dict[str, Any],
-    ) -> bool:
-        """
-        Determine if a position has reached the breakeven trigger ratio.
-        Simplified: checks if current price has moved enough.
-        """
-        # For now, return False - this needs real portfolio data to work
-        # In a real implementation, we'd parse the portfolio response to find
-        # the position's current P&L and compare against the risk amount
-        current_price = portfolio.get("currentPrice")
-        if current_price is None:
-            return False
-
-        entry = position["entry_price"]
-        is_buy = position["is_buy"]
-
-        if is_buy and current_price > entry:
-            gain_ratio = (current_price - entry) / (entry - position.get("stop_loss", entry))
-            return gain_ratio >= settings.break_even_ratio
-        elif not is_buy and current_price < entry:
-            gain_ratio = (entry - current_price) / (position.get("stop_loss", entry) - entry)
-            return gain_ratio >= settings.break_even_ratio
-
-        return False
+    def _symbol_for_position(self, position: dict[str, Any]) -> str:
+        """Best-effort symbol lookup for a position (defaults to EUR/USD)."""
+        # Positions do not store the symbol directly today; the strategy
+        # symbol is EUR/USD in the default setup.  For custom strategies the
+        # engine already resolved the instrument at trade time.
+        return "EUR/USD"
 
     # ── Internal: Portfolio Balance ────────────────────────────────────
 
@@ -887,10 +924,8 @@ class TradingBotEngine:
         seconds = int(delta.total_seconds())
         return max(seconds, 60)  # never return less than 1 minute
 
-    def _to_signal_config(self, dto: StrategyConfigDTO) -> "StrategyConfig":
+    def _to_signal_config(self, dto: StrategyConfigDTO) -> StrategyConfig:
         """Convert a StrategyConfigDTO to the signals.StrategyConfig used by the pure functions."""
-        from app.bot.signals import StrategyConfig
-
         return StrategyConfig(
             id=dto.id,
             user_id=dto.user_id,

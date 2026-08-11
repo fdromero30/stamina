@@ -10,7 +10,21 @@ class Settings(BaseSettings):
     default_leverage: int = 1
     risk_per_trade: float = 0.005  # 0.5% of available account per trade
     max_open_positions: int = 2
-    break_even_ratio: float = 1.5  # Move SL to breakeven at 1.5:1
+    break_even_ratio: float = 1.5  # Legacy: retained for backward compatibility
+
+    # ── Transversal Risk Management (máquina de estados + trailing ATR) ─
+    # Defaults — overridable per strategy via the Java backend.
+    hito1_trigger_r: float = 1.0      # SL → breakeven + spread
+    hito2_trigger_r: float = 1.5      # SL → +1.0R and activate trailing
+    hito2_sl_r: float = 1.0           # Minimum secured R in Hito 2
+    breakeven_spread_mult: float = 1.0
+    trailing_enabled: bool = True
+    trailing_atr_mult: float = 1.2
+    trailing_atr_period: int = 14
+    max_tp_far_r: float = 5.0         # Far TP to "deactivate" the fixed TP
+    use_candle_high_low: bool = True
+    sl_update_retry_seconds: int = 5
+    min_sl_update_spacing_pips: float = 1.0
 
     # ── Trading Hours (EUR/USD: Sun 5pm ET → Fri 5pm ET) ──────────────
     # Use 24h format in US/Eastern timezone

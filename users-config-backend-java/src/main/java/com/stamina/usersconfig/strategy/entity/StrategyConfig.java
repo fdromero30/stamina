@@ -82,6 +82,38 @@ public class StrategyConfig {
     @Column
     private BigDecimal breakEvenTrigger;
 
+    // ---------- Transversal Risk Management (máquina de estados + trailing) ----------
+
+    @Column
+    private BigDecimal hito1TriggerR;
+
+    @Column
+    private BigDecimal hito2TriggerR;
+
+    @Column
+    private BigDecimal hito2SlR;
+
+    @Column
+    private BigDecimal breakevenSpreadMult;
+
+    @Column
+    private Boolean trailingEnabled;
+
+    @Column
+    private BigDecimal trailingAtrMult;
+
+    @Column
+    private BigDecimal maxTpFarR;
+
+    @Column
+    private Boolean useCandleHighLow;
+
+    @Column
+    private Integer slUpdateRetrySeconds;
+
+    @Column
+    private BigDecimal minSlUpdateSpacingPips;
+
     // ---------- ML Strategy ----------
 
     @Column(nullable = false)
@@ -242,6 +274,86 @@ public class StrategyConfig {
 
     public void setBreakEvenTrigger(BigDecimal breakEvenTrigger) {
         this.breakEvenTrigger = breakEvenTrigger;
+    }
+
+    public BigDecimal getHito1TriggerR() {
+        return hito1TriggerR;
+    }
+
+    public void setHito1TriggerR(BigDecimal hito1TriggerR) {
+        this.hito1TriggerR = hito1TriggerR;
+    }
+
+    public BigDecimal getHito2TriggerR() {
+        return hito2TriggerR;
+    }
+
+    public void setHito2TriggerR(BigDecimal hito2TriggerR) {
+        this.hito2TriggerR = hito2TriggerR;
+    }
+
+    public BigDecimal getHito2SlR() {
+        return hito2SlR;
+    }
+
+    public void setHito2SlR(BigDecimal hito2SlR) {
+        this.hito2SlR = hito2SlR;
+    }
+
+    public BigDecimal getBreakevenSpreadMult() {
+        return breakevenSpreadMult;
+    }
+
+    public void setBreakevenSpreadMult(BigDecimal breakevenSpreadMult) {
+        this.breakevenSpreadMult = breakevenSpreadMult;
+    }
+
+    public Boolean getTrailingEnabled() {
+        return trailingEnabled;
+    }
+
+    public void setTrailingEnabled(Boolean trailingEnabled) {
+        this.trailingEnabled = trailingEnabled;
+    }
+
+    public BigDecimal getTrailingAtrMult() {
+        return trailingAtrMult;
+    }
+
+    public void setTrailingAtrMult(BigDecimal trailingAtrMult) {
+        this.trailingAtrMult = trailingAtrMult;
+    }
+
+    public BigDecimal getMaxTpFarR() {
+        return maxTpFarR;
+    }
+
+    public void setMaxTpFarR(BigDecimal maxTpFarR) {
+        this.maxTpFarR = maxTpFarR;
+    }
+
+    public Boolean getUseCandleHighLow() {
+        return useCandleHighLow;
+    }
+
+    public void setUseCandleHighLow(Boolean useCandleHighLow) {
+        this.useCandleHighLow = useCandleHighLow;
+    }
+
+    public Integer getSlUpdateRetrySeconds() {
+        return slUpdateRetrySeconds;
+    }
+
+    public void setSlUpdateRetrySeconds(Integer slUpdateRetrySeconds) {
+        this.slUpdateRetrySeconds = slUpdateRetrySeconds;
+    }
+
+    public BigDecimal getMinSlUpdateSpacingPips() {
+        return minSlUpdateSpacingPips;
+    }
+
+    public void setMinSlUpdateSpacingPips(BigDecimal minSlUpdateSpacingPips) {
+        this.minSlUpdateSpacingPips = minSlUpdateSpacingPips;
     }
 
     public boolean isUseML() {

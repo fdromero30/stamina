@@ -29,6 +29,17 @@ class StrategyConfigDTO:
     break_even_trigger: Optional[float]
     use_ml: bool
     ml_strategy_code: Optional[str]
+    # Transversal risk management (máquina de estados + trailing ATR)
+    hito1_trigger_r: Optional[float] = None
+    hito2_trigger_r: Optional[float] = None
+    hito2_sl_r: Optional[float] = None
+    breakeven_spread_mult: Optional[float] = None
+    trailing_enabled: Optional[bool] = None
+    trailing_atr_mult: Optional[float] = None
+    max_tp_far_r: Optional[float] = None
+    use_candle_high_low: Optional[bool] = None
+    sl_update_retry_seconds: Optional[int] = None
+    min_sl_update_spacing_pips: Optional[float] = None
 
 
 class StrategiesClient:
@@ -90,6 +101,16 @@ class StrategiesClient:
             break_even_trigger=_to_float(item.get("breakEvenTrigger")),
             use_ml=bool(item.get("useML", False)),
             ml_strategy_code=item.get("mlStrategyCode"),
+            hito1_trigger_r=_to_float(item.get("hito1TriggerR")),
+            hito2_trigger_r=_to_float(item.get("hito2TriggerR")),
+            hito2_sl_r=_to_float(item.get("hito2SlR")),
+            breakeven_spread_mult=_to_float(item.get("breakevenSpreadMult")),
+            trailing_enabled=_to_bool(item.get("trailingEnabled")),
+            trailing_atr_mult=_to_float(item.get("trailingAtrMult")),
+            max_tp_far_r=_to_float(item.get("maxTpFarR")),
+            use_candle_high_low=_to_bool(item.get("useCandleHighLow")),
+            sl_update_retry_seconds=_to_int(item.get("slUpdateRetrySeconds")),
+            min_sl_update_spacing_pips=_to_float(item.get("minSlUpdateSpacingPips")),
         )
 
 
@@ -107,5 +128,18 @@ def _to_int(value: object) -> Optional[int]:
         return None
     try:
         return int(value)  # type: ignore[arg-type]
+    except (ValueError, TypeError):
+        return None
+
+
+def _to_bool(value: object) -> Optional[bool]:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.lower() in ("1", "true", "yes", "on")
+    try:
+        return bool(int(value))  # type: ignore[arg-type]
     except (ValueError, TypeError):
         return None

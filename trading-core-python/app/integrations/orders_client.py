@@ -299,3 +299,31 @@ class EtoroHttpClient:
             )
             resp.raise_for_status()
             return resp.json()
+
+    # ── Stop Loss / Take Profit updates ────────────────────────────
+
+    async def update_stop_loss(
+        self, user_id: str, position_id: int, stop_loss: float
+    ) -> dict[str, Any]:
+        """Update the stop loss on an existing position."""
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.put(
+                f"{self._base_url}/etoro/trading/stop-loss/{position_id}",
+                params={"userId": user_id},
+                json={"stopLoss": stop_loss},
+            )
+            resp.raise_for_status()
+            return resp.json()
+
+    async def update_take_profit(
+        self, user_id: str, position_id: int, take_profit: float
+    ) -> dict[str, Any]:
+        """Update the take profit on an existing position (e.g. far TP for trailing)."""
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.put(
+                f"{self._base_url}/etoro/trading/take-profit/{position_id}",
+                params={"userId": user_id},
+                json={"takeProfit": take_profit},
+            )
+            resp.raise_for_status()
+            return resp.json()

@@ -113,6 +113,47 @@ def _autoinc_primary_key() -> str:
     return "id INTEGER PRIMARY KEY AUTOINCREMENT"
 
 
+def _migrate_columns(table: str, columns: list[tuple[str, str]]) -> None:
+    """
+    Add columns to an existing table if they are missing.
+    Portable across SQLite and PostgreSQL.
+
+    ``columns`` is a list of (column_name, column_definition) tuples,
+    e.g. [("state", "INTEGER NOT NULL DEFAULT 0"), ("sl_original", "REAL")].
+    """
+    # Inspect existing columns (portable approach: query against the table).
+    try:
+        if db.engine == "postgres":
+            rows = db.query(
+                """
+                SELECT column_name
+                FROM information_schema.columns
+                WHERE table_name = ?
+                """,
+                (table,),
+            )
+            existing = {r["column_name"] for r in rows}
+        else:
+            # SQLite: PRAGMA table_info
+            conn = db._ensure_conn()
+            cur = conn.cursor()
+            cur.execute(f"PRAGMA table_info({table})")
+            rows = cur.fetchall()
+            existing = {r[1] for r in rows}
+            cur.close()
+    except Exception as e:
+        logger.warning("Failed to inspect columns for %s: %s", table, e)
+        return
+
+    for col_name, col_def in columns:
+        if col_name not in existing:
+            try:
+                db.execute(f"ALTER TABLE {table} ADD COLUMN {col_name} {col_def}")
+                logger.info("Migrated: added column %s.%s", table, col_name)
+            except Exception as e:
+                logger.warning("Failed to add column %s.%s: %s", table, col_name, e)
+
+
 def init_db() -> None:
     """Create tables if they don't exist (portable schema)."""
     db.execute("""
@@ -163,6 +204,13 @@ def init_db() -> None:
             is_buy INTEGER NOT NULL,
             breakeven_applied INTEGER NOT NULL DEFAULT 0,
             opened_at TEXT NOT NULL,
+            -- Risk state machine columns
+            state INTEGER NOT NULL DEFAULT 0,
+            sl_original REAL,
+            tp_fixed REAL,
+            highest_price REAL,
+            lowest_price REAL,
+            spread_real REAL,
             UNIQUE(user_id, position_id)
         )
     """)
@@ -171,6 +219,24 @@ def init_db() -> None:
         db.execute("ALTER TABLE bot_cycles ADD COLUMN reason TEXT")
     except Exception:
         pass
+
+    # Risk state machine columns — migrate existing tables if missing
+    _migrate_columns("open_positions", [
+        ("state", "INTEGER NOT NULL DEFAULT 0"),
+        ("sl_original", "REAL"),
+        ("tp_fixed", "REAL"),
+        ("highest_price", "REAL"),
+        ("lowest_price", "REAL"),
+        ("spread_real", "REAL"),
+    ])
+    # Backfill sl_original for existing positions at state 0 (their current SL is the original)
+    try:
+        db.execute(
+            "UPDATE open_positions SET sl_original = stop_loss WHERE sl_original IS NULL AND state = 0"
+        )
+    except Exception:
+        pass
+
     logger.info("Database initialized (engine=%s)", db.engine)
 
 
@@ -340,15 +406,22 @@ def save_position(user_id: str, position: dict[str, Any]) -> None:
         """
         INSERT INTO open_positions (
             user_id, position_id, entry_price, stop_loss, take_profit,
-            is_buy, breakeven_applied, opened_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            is_buy, breakeven_applied, opened_at,
+            state, sl_original, tp_fixed, highest_price, lowest_price, spread_real
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(user_id, position_id) DO UPDATE SET
             entry_price = excluded.entry_price,
             stop_loss = excluded.stop_loss,
             take_profit = excluded.take_profit,
             is_buy = excluded.is_buy,
             breakeven_applied = excluded.breakeven_applied,
-            opened_at = excluded.opened_at
+            opened_at = excluded.opened_at,
+            state = excluded.state,
+            sl_original = excluded.sl_original,
+            tp_fixed = excluded.tp_fixed,
+            highest_price = excluded.highest_price,
+            lowest_price = excluded.lowest_price,
+            spread_real = excluded.spread_real
         """,
         (
             user_id,
@@ -359,18 +432,65 @@ def save_position(user_id: str, position: dict[str, Any]) -> None:
             1 if position.get("is_buy", False) else 0,
             1 if position.get("breakeven_applied", False) else 0,
             position.get("opened_at", _now_iso()),
+            position.get("state", 0),
+            position.get("sl_original"),
+            position.get("tp_fixed"),
+            position.get("highest_price"),
+            position.get("lowest_price"),
+            position.get("spread_real"),
         ),
     )
 
 
 def update_position_breakeven(user_id: str, position_id: int, stop_loss: float) -> None:
+    """Legacy breakeven update — sets state to 1 and stores the new SL."""
     db.execute(
         """
         UPDATE open_positions
-        SET stop_loss = ?, breakeven_applied = 1
+        SET stop_loss = ?, breakeven_applied = 1, state = 1
         WHERE user_id = ? AND position_id = ?
         """,
         (stop_loss, user_id, position_id),
+    )
+
+
+def update_position_state(
+    user_id: str,
+    position_id: int,
+    *,
+    state: int,
+    stop_loss: Optional[float] = None,
+    take_profit: Optional[float] = None,
+    highest_price: Optional[float] = None,
+    lowest_price: Optional[float] = None,
+    spread_real: Optional[float] = None,
+) -> None:
+    """
+    Update the risk-state machine fields of an open position.
+    Only updates the fields explicitly provided (non-None).
+    """
+    sets: list[str] = ["state = ?"]
+    params: list[Any] = [state]
+    if stop_loss is not None:
+        sets.append("stop_loss = ?")
+        params.append(stop_loss)
+    if take_profit is not None:
+        sets.append("take_profit = ?")
+        params.append(take_profit)
+    if highest_price is not None:
+        sets.append("highest_price = ?")
+        params.append(highest_price)
+    if lowest_price is not None:
+        sets.append("lowest_price = ?")
+        params.append(lowest_price)
+    if spread_real is not None:
+        sets.append("spread_real = ?")
+        params.append(spread_real)
+    params.extend([user_id, position_id])
+
+    db.execute(
+        f"UPDATE open_positions SET {', '.join(sets)} WHERE user_id = ? AND position_id = ?",
+        tuple(params),
     )
 
 
@@ -389,6 +509,12 @@ def load_open_positions() -> dict[str, list[dict[str, Any]]]:
             "is_buy": bool(row["is_buy"]),
             "breakeven_applied": bool(row["breakeven_applied"]),
             "opened_at": row["opened_at"],
+            "state": row.get("state", 0),
+            "sl_original": row.get("sl_original"),
+            "tp_fixed": row.get("tp_fixed"),
+            "highest_price": row.get("highest_price"),
+            "lowest_price": row.get("lowest_price"),
+            "spread_real": row.get("spread_real"),
         })
     return positions
 

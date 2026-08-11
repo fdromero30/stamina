@@ -35,6 +35,18 @@ public record StrategyResponse(
     BigDecimal trailingStopActivation,
     BigDecimal breakEvenTrigger,
 
+    // Transversal Risk Management (máquina de estados + trailing ATR)
+    BigDecimal hito1TriggerR,
+    BigDecimal hito2TriggerR,
+    BigDecimal hito2SlR,
+    BigDecimal breakevenSpreadMult,
+    Boolean trailingEnabled,
+    BigDecimal trailingAtrMult,
+    BigDecimal maxTpFarR,
+    Boolean useCandleHighLow,
+    Integer slUpdateRetrySeconds,
+    BigDecimal minSlUpdateSpacingPips,
+
     // ML
     boolean useML,
     UUID mlStrategyId,
@@ -67,6 +79,17 @@ public record StrategyResponse(
             strategy.getTradingWindowEnd(),
             strategy.getTrailingStopActivation(),
             strategy.getBreakEvenTrigger(),
+
+            strategy.getHito1TriggerR(),
+            strategy.getHito2TriggerR(),
+            strategy.getHito2SlR(),
+            strategy.getBreakevenSpreadMult(),
+            strategy.getTrailingEnabled(),
+            strategy.getTrailingAtrMult(),
+            strategy.getMaxTpFarR(),
+            strategy.getUseCandleHighLow(),
+            strategy.getSlUpdateRetrySeconds(),
+            strategy.getMinSlUpdateSpacingPips(),
 
             strategy.isUseML(),
             strategy.getMlStrategy() != null ? strategy.getMlStrategy().getId() : null,

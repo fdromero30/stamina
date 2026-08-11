@@ -28,6 +28,18 @@ public record UpdateStrategyRequest(
     BigDecimal trailingStopActivation,
     BigDecimal breakEvenTrigger,
 
+    // Transversal Risk Management (máquina de estados + trailing ATR)
+    BigDecimal hito1TriggerR,
+    BigDecimal hito2TriggerR,
+    BigDecimal hito2SlR,
+    BigDecimal breakevenSpreadMult,
+    Boolean trailingEnabled,
+    BigDecimal trailingAtrMult,
+    BigDecimal maxTpFarR,
+    Boolean useCandleHighLow,
+    Integer slUpdateRetrySeconds,
+    BigDecimal minSlUpdateSpacingPips,
+
     // ML
     Boolean useML,
     UUID mlStrategyId

@@ -38,6 +38,9 @@ class TradingScheduler:
         self._on_tick: Optional[TickHandler] = None
         self._cycle_history: list[dict[str, Any]] = []
         self._run_id: Optional[str] = None
+        # Guards against overlapping cycles (manual trigger + auto loop, or
+        # future multi-instance deployments).
+        self._cycle_lock = asyncio.Lock()
 
         # Restore persisted state
         self._cycle_history = persistence.load_cycle_history(limit=history_limit)
@@ -118,7 +121,8 @@ class TradingScheduler:
         """Manually trigger a single trading cycle (for testing)."""
         if self._on_tick is None:
             raise RuntimeError("No tick handler set")
-        result = await self._run_single_cycle(source="manual")
+        async with self._cycle_lock:
+            result = await self._run_single_cycle(source="manual")
         self._cycle_count += 1
         self._last_run = datetime.now(timezone.utc)
         self._persist_state()
@@ -154,7 +158,8 @@ class TradingScheduler:
 
             # ── Run one cycle on the just-closed candle ──
             try:
-                result = await self._run_single_cycle(source="auto")
+                async with self._cycle_lock:
+                    result = await self._run_single_cycle(source="auto")
                 self._cycle_count += 1
                 self._last_run = datetime.now(timezone.utc)
 

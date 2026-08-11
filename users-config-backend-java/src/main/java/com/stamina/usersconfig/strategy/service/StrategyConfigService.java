@@ -32,6 +32,16 @@ public class StrategyConfigService {
     public static final BigDecimal DEFAULT_MAX_RISK_PER_TRADE = new BigDecimal("0.005"); // 0.5%
     public static final Integer DEFAULT_MAX_OPEN_POSITIONS = 2;
     public static final BigDecimal DEFAULT_BREAK_EVEN_TRIGGER = new BigDecimal("1.5");
+    public static final BigDecimal DEFAULT_HITO1_TRIGGER_R = new BigDecimal("1.0");
+    public static final BigDecimal DEFAULT_HITO2_TRIGGER_R = new BigDecimal("1.5");
+    public static final BigDecimal DEFAULT_HITO2_SL_R = new BigDecimal("1.0");
+    public static final BigDecimal DEFAULT_BREAKEVEN_SPREAD_MULT = new BigDecimal("1.0");
+    public static final BigDecimal DEFAULT_TRAILING_ATR_MULT = new BigDecimal("1.2");
+    public static final BigDecimal DEFAULT_MAX_TP_FAR_R = new BigDecimal("5.0");
+    public static final BigDecimal DEFAULT_MIN_SL_UPDATE_SPACING_PIPS = new BigDecimal("1.0");
+    public static final Boolean DEFAULT_TRAILING_ENABLED = Boolean.TRUE;
+    public static final Boolean DEFAULT_USE_CANDLE_HIGH_LOW = Boolean.TRUE;
+    public static final Integer DEFAULT_SL_UPDATE_RETRY_SECONDS = 5;
 
     private final StrategyConfigRepository strategyRepository;
     private final AppUserRepository userRepository;
@@ -92,6 +102,16 @@ public class StrategyConfigService {
         defaultStrategy.setMaxOpenPositions(DEFAULT_MAX_OPEN_POSITIONS);
         defaultStrategy.setMaxRiskPerTrade(DEFAULT_MAX_RISK_PER_TRADE);
         defaultStrategy.setBreakEvenTrigger(DEFAULT_BREAK_EVEN_TRIGGER);
+        defaultStrategy.setHito1TriggerR(DEFAULT_HITO1_TRIGGER_R);
+        defaultStrategy.setHito2TriggerR(DEFAULT_HITO2_TRIGGER_R);
+        defaultStrategy.setHito2SlR(DEFAULT_HITO2_SL_R);
+        defaultStrategy.setBreakevenSpreadMult(DEFAULT_BREAKEVEN_SPREAD_MULT);
+        defaultStrategy.setTrailingEnabled(DEFAULT_TRAILING_ENABLED);
+        defaultStrategy.setTrailingAtrMult(DEFAULT_TRAILING_ATR_MULT);
+        defaultStrategy.setMaxTpFarR(DEFAULT_MAX_TP_FAR_R);
+        defaultStrategy.setUseCandleHighLow(DEFAULT_USE_CANDLE_HIGH_LOW);
+        defaultStrategy.setSlUpdateRetrySeconds(DEFAULT_SL_UPDATE_RETRY_SECONDS);
+        defaultStrategy.setMinSlUpdateSpacingPips(DEFAULT_MIN_SL_UPDATE_SPACING_PIPS);
 
         strategyRepository.save(defaultStrategy);
     }
@@ -114,6 +134,10 @@ public class StrategyConfigService {
             request.stopLoss(), request.takeProfit(), request.spreadThreshold(),
             request.tradingWindowStart(), request.tradingWindowEnd(),
             request.trailingStopActivation(), request.breakEvenTrigger(),
+            request.hito1TriggerR(), request.hito2TriggerR(), request.hito2SlR(),
+            request.breakevenSpreadMult(), request.trailingEnabled(), request.trailingAtrMult(),
+            request.maxTpFarR(), request.useCandleHighLow(), request.slUpdateRetrySeconds(),
+            request.minSlUpdateSpacingPips(),
             request.useML(), request.mlStrategyId());
 
         StrategyConfig saved = strategyRepository.save(strategy);
@@ -135,6 +159,10 @@ public class StrategyConfigService {
             request.stopLoss(), request.takeProfit(), request.spreadThreshold(),
             request.tradingWindowStart(), request.tradingWindowEnd(),
             request.trailingStopActivation(), request.breakEvenTrigger(),
+            request.hito1TriggerR(), request.hito2TriggerR(), request.hito2SlR(),
+            request.breakevenSpreadMult(), request.trailingEnabled(), request.trailingAtrMult(),
+            request.maxTpFarR(), request.useCandleHighLow(), request.slUpdateRetrySeconds(),
+            request.minSlUpdateSpacingPips(),
             request.useML(), request.mlStrategyId());
 
         StrategyConfig saved = strategyRepository.save(strategy);
@@ -176,6 +204,16 @@ public class StrategyConfigService {
                                       java.time.LocalTime tradingWindowEnd,
                                       BigDecimal trailingStopActivation,
                                       BigDecimal breakEvenTrigger,
+                                      BigDecimal hito1TriggerR,
+                                      BigDecimal hito2TriggerR,
+                                      BigDecimal hito2SlR,
+                                      BigDecimal breakevenSpreadMult,
+                                      Boolean trailingEnabled,
+                                      BigDecimal trailingAtrMult,
+                                      BigDecimal maxTpFarR,
+                                      Boolean useCandleHighLow,
+                                      Integer slUpdateRetrySeconds,
+                                      BigDecimal minSlUpdateSpacingPips,
                                       Boolean useML,
                                       UUID mlStrategyId) {
         strategy.setMaxDrawdown(maxDrawdown);
@@ -198,6 +236,16 @@ public class StrategyConfigService {
         strategy.setTradingWindowEnd(tradingWindowEnd);
         strategy.setTrailingStopActivation(trailingStopActivation);
         strategy.setBreakEvenTrigger(breakEvenTrigger);
+        strategy.setHito1TriggerR(hito1TriggerR);
+        strategy.setHito2TriggerR(hito2TriggerR);
+        strategy.setHito2SlR(hito2SlR);
+        strategy.setBreakevenSpreadMult(breakevenSpreadMult);
+        strategy.setTrailingEnabled(trailingEnabled);
+        strategy.setTrailingAtrMult(trailingAtrMult);
+        strategy.setMaxTpFarR(maxTpFarR);
+        strategy.setUseCandleHighLow(useCandleHighLow);
+        strategy.setSlUpdateRetrySeconds(slUpdateRetrySeconds);
+        strategy.setMinSlUpdateSpacingPips(minSlUpdateSpacingPips);
 
         if (useML != null) {
             strategy.setUseML(useML);
