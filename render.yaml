@@ -66,6 +66,10 @@ services:
     dockerfilePath: Dockerfile
     healthCheckPath: /
     envVars:
+      # RENDER=true es detectado por entrypoint.sh para usar el template
+      # con SNI (evita el 502 Bad Gateway en el handshake SSL).
+      - key: RENDER
+        value: "true"
       # Reemplaza los dominios onrender cuando Render te asigne las URLs reales
       - key: USERS_CONFIG_API_URL
         value: https://users-config-backend.onrender.com

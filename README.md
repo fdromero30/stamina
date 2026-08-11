@@ -204,6 +204,12 @@ npm run dev
 
 El servidor de desarrollo corre en `http://localhost:5174` y hace proxy de `/api` → `http://localhost:8080` y `/trading-core` → `http://localhost:8000`.
 
+#### Nginx parametrizable (local vs Render)
+
+El Dockerfile incluye dos templates seleccionados por `entrypoint.sh`:
+- Local (sin RENDER): `nginx.local.conf` -> proxy HTTP a red interna
+- Render (RENDER=true): `nginx.render.conf` -> proxy HTTPS con SNI
+
 ### Trading Core (Python + FastAPI)
 
 ```bash
@@ -262,7 +268,9 @@ stamina/
 ├── .env.example                    # Plantilla de variables de entorno
 ├── frontend-react/                 # Frontend React + TypeScript (Vite)
 │   ├── Dockerfile
-│   ├── nginx.conf                  # Configuración de Nginx (proxy inverso)
+│   ├── nginx.local.conf            # Template Nginx para entorno local
+│   ├── nginx.render.conf           # Template Nginx para Render (SNI)
+│   ├── entrypoint.sh               # Selecciona template según entorno
 │   ├── package.json
 │   └── src/
 │       ├── components/             # Componentes reutilizables
