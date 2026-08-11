@@ -105,7 +105,18 @@ def _strip_exchange_suffix(symbol: str) -> str:
     return s
 
 
-# ── Layer 3 cache record ────────────────────────────────────────────────
+# ── Static instrument ID map (fast path) ────────────────────────────────
+# Los IDs populares se resuelven sin descargar el catálogo completo (16k+).
+_STATIC_IDS: dict[str, int] = {
+    "EURUSD": 1, "GBPUSD": 2, "USDJPY": 3, "AUDUSD": 4, "USDCAD": 5,
+    "USDCHF": 6, "NZDUSD": 7, "EURGBP": 8, "EURJPY": 9,
+    "BTC": 100000, "ETH": 100001, "XRP": 100002, "SOL": 100003,
+    "ADA": 100004, "DOGE": 100005, "LTC": 100006,
+    "AAPL": 400017, "TSLA": 400018, "NVDA": 400019, "AMZN": 400020,
+    "MSFT": 400021, "META": 400022, "GOOGL": 400023, "NFLX": 400024,
+    "XAUUSD": 10000, "XAGUSD": 10001,
+    "SPX500": 30001, "NAS100": 30002, "US30": 30003, "GER40": 30004,
+}
 
 
 class SymbolResolver:
@@ -133,17 +144,24 @@ class SymbolResolver:
         if not symbol or not symbol.strip():
             return None
 
-        # 1. Static alias map
+        # 0. FAST PATH: static instrument ID map (no network needed)
         norm = _normalize_symbol(symbol)
-        aliased = SYMBOL_ALIASES.get(norm)
-        if aliased:
+        if norm in _STATIC_IDS:
+            return _STATIC_IDS[norm]
+        base = _strip_exchange_suffix(norm)
+        if base and base in _STATIC_IDS:
+            return _STATIC_IDS[base]
+        if aliased := SYMBOL_ALIASES.get(norm):
+            if aliased.upper() in _STATIC_IDS:
+                return _STATIC_IDS[aliased.upper()]
+
+        # 1. Static alias map (via catalogue)
+        if aliased := SYMBOL_ALIASES.get(norm):
             inst = await self._find_in_catalogue(user_id, aliased)
             if inst is not None:
                 return inst
-            # If the alias is not in the catalogue (unlikely), fall through.
 
         # 2. Heuristic: strip exchange suffix (BTCUSDT -> BTC)
-        base = _strip_exchange_suffix(norm)
         if base and base != norm:
             inst = await self._find_in_catalogue(user_id, base)
             if inst is not None:
