@@ -18,10 +18,15 @@ services:
     healthCheckPath: /health
     envVars:
       # ── Supabase (PostgreSQL) ─────────────────────────────────
-      # Se completan desde el panel de Render > Environment:
-      #   SPRING_DATASOURCE_URL      = postgresql://postgres:[PASS]@db.[REF].supabase.co:5432/postgres
-      #   SPRING_DATASOURCE_USERNAME = postgres
-      #   SPRING_DATASOURCE_PASSWORD = [password de Supabase]
+      # Se completan desde el panel de Render > Environment.
+      # IMPORTANTE: Usa el TRANSACTION POOLER (no el host directo
+      # db.<ref>.supabase.co que falla por routing IPv4/IPv6).
+      #
+      # Valores verificados en DBeaver:
+      #   SPRING_DATASOURCE_URL      = jdbc:postgresql://aws-1-us-west-2.pooler.supabase.com:6543/postgres?sslmode=require
+      #   SPRING_DATASOURCE_USERNAME = postgres.ifbrxvkmeiburqagskjs
+      #   SPRING_DATASOURCE_PASSWORD = password de Supabase
+      #   SPRING_DATASOURCE_DRIVER   = org.postgresql.Driver (auto)
       - key: SPRING_DATASOURCE_URL
         sync: false
       - key: SPRING_DATASOURCE_USERNAME

@@ -7,9 +7,16 @@ spring:
   autoconfigure:
     exclude: org.springframework.boot.autoconfigure.security.servlet.UserDetailsServiceAutoConfiguration
   datasource:
-    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/stamina}
-    username: ${SPRING_DATASOURCE_USERNAME:stamina}
-    password: ${SPRING_DATASOURCE_PASSWORD:stamina_dev_password}
+    # Supabase requires SSL. Credentials are passed separately via env vars.
+    # CUIDADO: el '*' en la password rompe el parsing si se embebe en la URL.
+    #
+    # TRANSACTION POOLER (verificado en DBeaver):
+    #   Host: aws-1-us-west-2.pooler.supabase.com
+    #   Port: 6543
+    # Usuario del pooler = <user>.<project_ref> → postgres.ifbrxvkmeiburqagskjs
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://aws-1-us-west-2.pooler.supabase.com:6543/postgres?sslmode=require}
+    username: ${SPRING_DATASOURCE_USERNAME:postgres.ifbrxvkmeiburqagskjs}
+    password: ${SPRING_DATASOURCE_PASSWORD:}
   jpa:
     hibernate:
       ddl-auto: update

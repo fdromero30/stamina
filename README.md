@@ -373,6 +373,27 @@ El trading core guarda el estado del bot en una base de datos SQLite local (`tra
 
 ## 🧰 Troubleshooting
 
+### Conexión a Supabase falla (`jdbc connection problem` o `tenant not found`)
+
+**Causa más común:** El hostname directo `db.ifbrxvkmeiburqagskjs.supabase.co` **no es accesible** desde algunos entornos (routing IPv4/IPv6). La solución es usar el **TRANSACTION POOLER**.
+
+**Configuración verificada en DBeaver (funciona):**
+| Variable | Valor |
+|---|---|
+| `SUPABASE_DB_HOST` | `aws-1-us-west-2.pooler.supabase.com` |
+| `SUPABASE_DB_PORT` | `6543` (transaction pooler) |
+| `SUPABASE_DB_USER` | `postgres.ifbrxvkmeiburqagskjs` |
+| `SUPABASE_DB_PASSWORD` | password de Supabase |
+
+Verificación rápida:
+```bash
+python3 db_diagnostic.py
+cat stamina_db_check.txt
+```
+Debes ver `Auth code` o `tenant EXISTS`.
+
+> ⚠️ **Nunca** incrustes la password en la JDBC URL (`jdbc:postgresql://...?password=...`). Caracteres como `*` rompen el parsing. Pásala por `SPRING_DATASOURCE_PASSWORD`.
+
 ### El puerto 5432 ya está en uso
 
 Cambia el puerto de Postgres en tu `.env`:
