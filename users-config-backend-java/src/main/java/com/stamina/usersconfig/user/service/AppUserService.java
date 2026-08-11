@@ -1,5 +1,6 @@
 package com.stamina.usersconfig.user.service;
 
+import com.stamina.usersconfig.strategy.service.StrategyConfigService;
 import com.stamina.usersconfig.user.dto.CreateUserRequest;
 import com.stamina.usersconfig.user.dto.LoginRequest;
 import com.stamina.usersconfig.user.dto.UserResponse;
@@ -24,10 +25,14 @@ public class AppUserService {
 
     private final AppUserRepository repository;
     private final PasswordEncoder passwordEncoder;
+    private final StrategyConfigService strategyConfigService;
 
-    public AppUserService(AppUserRepository repository, PasswordEncoder passwordEncoder) {
+    public AppUserService(AppUserRepository repository,
+                          PasswordEncoder passwordEncoder,
+                          StrategyConfigService strategyConfigService) {
         this.repository = repository;
         this.passwordEncoder = passwordEncoder;
+        this.strategyConfigService = strategyConfigService;
     }
 
     public List<UserResponse> listAll() {
@@ -44,6 +49,11 @@ public class AppUserService {
         }
         String hashedPassword = passwordEncoder.encode(request.password());
         AppUser saved = repository.save(new AppUser(email, request.displayName(), hashedPassword));
+
+        // Asignar la estrategia default de la app para que el sistema nunca
+        // quede sin estrategias configuradas (evita que el bot/UI se rompa).
+        strategyConfigService.ensureDefaultStrategy(saved.getId());
+
         return UserResponse.fromEntity(saved);
     }
 

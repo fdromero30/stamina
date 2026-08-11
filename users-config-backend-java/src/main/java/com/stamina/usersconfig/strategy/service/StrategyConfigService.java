@@ -25,6 +25,14 @@ import java.util.UUID;
 @Service
 public class StrategyConfigService {
 
+    /** Estrategia por defecto de la app, asignada automáticamente cuando un usuario no tiene ninguna. */
+    public static final String DEFAULT_STRATEGY_NAME = "MA200 + MA9 Crossover (Default)";
+    public static final String DEFAULT_STRATEGY_SYMBOL = "EUR/USD";
+    public static final BigDecimal DEFAULT_MAX_POSITION_SIZE = new BigDecimal("0.10");
+    public static final BigDecimal DEFAULT_MAX_RISK_PER_TRADE = new BigDecimal("0.005"); // 0.5%
+    public static final Integer DEFAULT_MAX_OPEN_POSITIONS = 2;
+    public static final BigDecimal DEFAULT_BREAK_EVEN_TRIGGER = new BigDecimal("1.5");
+
     private final StrategyConfigRepository strategyRepository;
     private final AppUserRepository userRepository;
     private final StopLossTypeRepository stopLossTypeRepository;
@@ -48,12 +56,44 @@ public class StrategyConfigService {
             .toList();
     }
 
-    @Transactional(readOnly = true)
+    @Transactional
     public List<StrategyResponse> listByUserId(UUID userId) {
-        return strategyRepository.findByUserId(userId)
-            .stream()
+        List<StrategyConfig> strategies = strategyRepository.findByUserId(userId);
+        if (strategies.isEmpty()) {
+            ensureDefaultStrategy(userId);
+            strategies = strategyRepository.findByUserId(userId);
+        }
+        return strategies.stream()
             .map(StrategyResponse::fromEntity)
             .toList();
+    }
+
+    /**
+     * Asegura que el usuario tenga al menos la estrategia por defecto de la app.
+     * Si el usuario ya tiene estrategias las respeta; si no tiene ninguna, crea
+     * y persiste una {@link StrategyConfig} default habilitada.
+     */
+    @Transactional
+    public void ensureDefaultStrategy(UUID userId) {
+        if (!strategyRepository.findByUserId(userId).isEmpty()) {
+            return;
+        }
+
+        AppUser user = userRepository.findById(userId)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "User not found"));
+
+        StrategyConfig defaultStrategy = new StrategyConfig(
+            user,
+            DEFAULT_STRATEGY_NAME,
+            DEFAULT_STRATEGY_SYMBOL,
+            DEFAULT_MAX_POSITION_SIZE,
+            true // enabled
+        );
+        defaultStrategy.setMaxOpenPositions(DEFAULT_MAX_OPEN_POSITIONS);
+        defaultStrategy.setMaxRiskPerTrade(DEFAULT_MAX_RISK_PER_TRADE);
+        defaultStrategy.setBreakEvenTrigger(DEFAULT_BREAK_EVEN_TRIGGER);
+
+        strategyRepository.save(defaultStrategy);
     }
 
     @Transactional

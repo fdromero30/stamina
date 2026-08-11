@@ -97,6 +97,57 @@ class StrategyConfigServiceTest {
     }
 
     @Test
+    void listByUserId_shouldCreateAndReturnDefaultStrategyWhenUserHasNone() {
+        when(userRepository.findById(userId)).thenReturn(Optional.of(testUser));
+
+        var defaultStrategy = new StrategyConfig(
+            testUser,
+            StrategyConfigService.DEFAULT_STRATEGY_NAME,
+            StrategyConfigService.DEFAULT_STRATEGY_SYMBOL,
+            StrategyConfigService.DEFAULT_MAX_POSITION_SIZE,
+            true
+        );
+        when(strategyRepository.save(any(StrategyConfig.class))).thenReturn(defaultStrategy);
+        // findByUserId is called three times:
+        //   1. in listByUserId (empty -> triggers default)
+        //   2. inside ensureDefaultStrategy (empty -> proceeds to create)
+        //   3. after ensureDefaultStrategy (returns the created default)
+        when(strategyRepository.findByUserId(userId))
+            .thenReturn(List.of())
+            .thenReturn(List.of())
+            .thenReturn(List.of(defaultStrategy));
+
+        List<StrategyResponse> result = service.listByUserId(userId);
+
+        assertThat(result).hasSize(1);
+        assertThat(result.get(0).name()).isEqualTo(StrategyConfigService.DEFAULT_STRATEGY_NAME);
+        assertThat(result.get(0).symbol()).isEqualTo(StrategyConfigService.DEFAULT_STRATEGY_SYMBOL);
+        assertThat(result.get(0).enabled()).isTrue();
+        verify(strategyRepository).save(any(StrategyConfig.class));
+    }
+
+    @Test
+    void ensureDefaultStrategy_shouldCreateDefaultWhenUserHasNoStrategies() {
+        when(strategyRepository.findByUserId(userId)).thenReturn(List.of());
+        when(userRepository.findById(userId)).thenReturn(Optional.of(testUser));
+        when(strategyRepository.save(any(StrategyConfig.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        service.ensureDefaultStrategy(userId);
+
+        verify(strategyRepository).save(any(StrategyConfig.class));
+    }
+
+    @Test
+    void ensureDefaultStrategy_shouldNotCreateWhenUserAlreadyHasStrategies() {
+        var existing = new StrategyConfig(testUser, "Existing", "BTCUSDT", BigDecimal.ONE, false);
+        when(strategyRepository.findByUserId(userId)).thenReturn(List.of(existing));
+
+        service.ensureDefaultStrategy(userId);
+
+        verify(strategyRepository, never()).save(any());
+    }
+
+    @Test
     void create_shouldSaveAndReturnStrategy() {
         var request = new CreateStrategyRequest(
             userId, "New Strat", "SOLUSDT", new BigDecimal("0.5"), true,

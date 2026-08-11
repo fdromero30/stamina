@@ -1,5 +1,6 @@
 package com.stamina.usersconfig.user.service;
 
+import com.stamina.usersconfig.strategy.service.StrategyConfigService;
 import com.stamina.usersconfig.user.dto.CreateUserRequest;
 import com.stamina.usersconfig.user.dto.LoginRequest;
 import com.stamina.usersconfig.user.dto.UserResponse;
@@ -38,12 +39,15 @@ class AppUserServiceTest {
     @Mock
     private PasswordEncoder passwordEncoder;
 
+    @Mock
+    private StrategyConfigService strategyConfigService;
+
     private AppUserService service;
     private AppUser alice;
 
     @BeforeEach
     void setUp() {
-        service = new AppUserService(repository, passwordEncoder);
+        service = new AppUserService(repository, passwordEncoder, strategyConfigService);
         alice = new AppUser("alice@stamina.local", "Alice", HASHED_PASSWORD);
         setUserId(alice, UUID.randomUUID());
     }
@@ -94,7 +98,11 @@ class AppUserServiceTest {
         try {
             when(repository.existsByEmail(anyString())).thenReturn(false);
             when(passwordEncoder.encode(TEST_PASSWORD)).thenReturn(HASHED_PASSWORD);
-            when(repository.save(any(AppUser.class))).thenAnswer(invocation -> invocation.getArgument(0));
+            when(repository.save(any(AppUser.class))).thenAnswer(invocation -> {
+                AppUser user = invocation.getArgument(0);
+                setUserId(user, UUID.randomUUID());
+                return user;
+            });
 
             ArgumentCaptor<AppUser> userCaptor = ArgumentCaptor.forClass(AppUser.class);
 
@@ -105,6 +113,9 @@ class AppUserServiceTest {
             assertThat(saved.getEmail()).startsWith("test-").endsWith("@stamina.local");
             assertThat(saved.getDisplayName()).isEqualTo("Usuario de prueba");
             assertThat(response.email()).isEqualTo(saved.getEmail());
+
+            // Al crear un usuario se le debe asignar la estrategia default
+            verify(strategyConfigService).ensureDefaultStrategy(saved.getId());
         } catch (Exception ex) {
             throw new AssertionError("Falló simulateCreateUser con valores nulos.", ex);
         }
@@ -119,6 +130,26 @@ class AppUserServiceTest {
                     .isInstanceOf(UserAlreadyExistsException.class);
         } catch (Exception ex) {
             throw new AssertionError("Falló la propagación de email duplicado.", ex);
+        }
+    }
+
+    @Test
+    void create_debeAsignarEstrategiaDefaultAlNuevoUsuario() {
+        try {
+            when(repository.existsByEmail("new@stamina.local")).thenReturn(false);
+            when(passwordEncoder.encode(TEST_PASSWORD)).thenReturn(HASHED_PASSWORD);
+            when(repository.save(any(AppUser.class))).thenAnswer(invocation -> {
+                AppUser user = invocation.getArgument(0);
+                setUserId(user, UUID.randomUUID());
+                return user;
+            });
+
+            UserResponse response = service.create(new CreateUserRequest("new@stamina.local", "Nuevo Usuario", TEST_PASSWORD));
+
+            assertThat(response.email()).isEqualTo("new@stamina.local");
+            verify(strategyConfigService).ensureDefaultStrategy(any(UUID.class));
+        } catch (Exception ex) {
+            throw new AssertionError("Falló create con asignación de estrategia default.", ex);
         }
     }
 

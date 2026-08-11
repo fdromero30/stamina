@@ -65,10 +65,13 @@ class StrategyConfigControllerTest {
     }
 
     @Test
-    void listStrategies_shouldReturnEmptyList() throws Exception {
+    void listStrategies_shouldReturnDefaultStrategyWhenUserHasNone() throws Exception {
         mockMvc.perform(get("/strategies?userId=" + testUser.getId()))
             .andExpect(status().isOk())
-            .andExpect(jsonPath("$", hasSize(0)));
+            .andExpect(jsonPath("$", hasSize(1)))
+            .andExpect(jsonPath("$[0].name", is("MA200 + MA9 Crossover (Default)")))
+            .andExpect(jsonPath("$[0].symbol", is("EUR/USD")))
+            .andExpect(jsonPath("$[0].enabled", is(true)));
     }
 
     @Test
@@ -178,16 +181,18 @@ class StrategyConfigControllerTest {
     }
 
     @Test
-    void deleteStrategy_shouldRemoveAndReturnNoContent() throws Exception {
+    void deleteStrategy_shouldRemoveUserStrategyAndRecreateDefaultOnNextList() throws Exception {
         var strategy = strategyRepository.save(
             new StrategyConfig(testUser, "To Delete", "DEL", BigDecimal.ONE, false));
 
         mockMvc.perform(delete("/strategies/{id}", strategy.getId()))
             .andExpect(status().isNoContent());
 
+        // After deleting the last user strategy, the next list recreates the default
         mockMvc.perform(get("/strategies?userId=" + testUser.getId()))
             .andExpect(status().isOk())
-            .andExpect(jsonPath("$", hasSize(0)));
+            .andExpect(jsonPath("$", hasSize(1)))
+            .andExpect(jsonPath("$[0].name", is("MA200 + MA9 Crossover (Default)")));
     }
 
     @Test
