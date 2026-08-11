@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from app.bot import persistence
@@ -45,6 +46,15 @@ scheduler = TradingScheduler(interval_seconds=settings.trading_interval_seconds)
 scheduler.set_tick_handler(engine.run_trading_cycle)
 
 app = FastAPI(title="Stamina Trading Core", version="0.2.0")
+
+# CORS para localhost y Render
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 # ── Health ──────────────────────────────────────────────────────────────
