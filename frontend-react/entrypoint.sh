@@ -14,22 +14,22 @@ fi
 envsubst '${PORT} ${USERS_CONFIG_API_URL} ${TRADING_CORE_API_URL}' < "$TEMPLATE" > /etc/nginx/conf.d/default.conf
 
 # Generate runtime config.js for the BROWSER:
-#   - Local (PORT=80): relative paths (/api, /trading-core) → Nginx proxies
-#   - Render (PORT!=80): absolute URLs → browser calls backends directly (CORS)
-# The VITE_* vars are set in docker-compose.yml for local, and in render.yaml
-# via dockerBuildArgs for Render.
+#   - Both local and Render: relative paths (/api, /trading-core) → Nginx proxies
+# The VITE_* vars are only used for LOCAL override to a remote backend.
 BROWSER_USERS_URL="${VITE_USERS_CONFIG_API_URL:-}"
 BROWSER_TRADING_URL="${VITE_TRADING_CORE_URL:-}"
 
 if [ "${RENDER:-}" = "true" ] || [ "${PORT:-80}" != "80" ]; then
-  # On Render, the browser must use the public HTTPS URLs
-  BROWSER_USERS_URL="${VITE_USERS_CONFIG_API_URL:-${USERS_CONFIG_API_URL}}"
-  BROWSER_TRADING_URL="${VITE_TRADING_CORE_URL:-${TRADING_CORE_API_URL}}"
+  # On Render: Nginx proxya /api y /trading-core hacia los backends.
+  # Usamos SIEMPRE rutas relativas para no depender de URLs absolutas
+  # que puedan quedar desactualizadas en el dashboard de Render.
+  BROWSER_USERS_URL="/api"
+  BROWSER_TRADING_URL="/trading-core"
 else
   # On local: default to relative paths proxied by Nginx,
   # BUT allow override to a production backend via VITE_* absolute URLs:
   #   VITE_USERS_CONFIG_API_URL=https://users-config-backend.onrender.com
-  #   VITE_TRADING_CORE_URL=https://trading-core.onrender.com
+  #   VITE_TRADING_CORE_URL=https://trading-core-qthd.onrender.com
   case "$BROWSER_USERS_URL" in
     http://*|https://*) ;;                      # absolute URL → use as-is
     *) BROWSER_USERS_URL="/api" ;;              # otherwise proxy via Nginx

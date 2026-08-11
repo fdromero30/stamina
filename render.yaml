@@ -57,15 +57,18 @@ services:
     healthCheckPath: /
     build:
       dockerBuildArgs:
-        # Build-time args: se inyectan durante `npm run build` en Docker
-        # para que el bundle JS contenga las URLs absolutas de los backends
+        # Build-time args: URLs correctas como fallback del bundle JS.
+        # En runtime, entrypoint.sh genera config.js con rutas relativas
+        # (/api, /trading-core) que tienen prioridad (config.ts lee
+        # window.__STAMINA_CONFIG__ primero), así que Nginx proxya a los
+        # backends sin depender de URLs absolutas en el bundle.
         VITE_USERS_CONFIG_API_URL: https://users-config-backend.onrender.com
         VITE_TRADING_CORE_URL: https://trading-core-qthd.onrender.com
     envVars:
-      # Detectado por entrypoint.sh para template solo estáticos
+      # Detectado por entrypoint.sh para template con proxies
       - key: RENDER
         value: "true"
-      # Nginx no proxy APIs en Render — el bundle usa URLs absolutas con CORS
+      # Upstreams para Nginx: siempre debe apuntar a las URLs actuales
       - key: USERS_CONFIG_API_URL
         value: https://users-config-backend.onrender.com
       - key: TRADING_CORE_API_URL

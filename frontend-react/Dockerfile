@@ -4,9 +4,11 @@ WORKDIR /app
 COPY package*.json ./
 RUN npm install
 COPY . .
-# Build args para inyectar URLs de API en el bundle JS:
-# - Local: /api y /trading-core (relativas → Nginx proxy)
-# - Render: https://users-config-backend.onrender.com (absolutas → CORS directo)
+# Build args para inyectar URLs de API en el bundle JS.
+# Tanto local como Render usan rutas RELATIVAS (/api, /trading-core) y
+# Nginx hace proxy hacia los backends. El runtime config.js (generado por
+# entrypoint.sh) también fuerza rutas relativas en Render, así que el bundle
+# nunca depende de URLs absolutas de los servicios upstream.
 ARG VITE_USERS_CONFIG_API_URL=/api
 ARG VITE_TRADING_CORE_URL=/trading-core
 ENV VITE_USERS_CONFIG_API_URL=$VITE_USERS_CONFIG_API_URL
