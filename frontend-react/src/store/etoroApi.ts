@@ -3,7 +3,7 @@ import { createApi, fetchBaseQuery } from "@reduxjs/toolkit/query/react";
 // In production the backend is reached through the nginx proxy at a RELATIVE
 // path (/api). This keeps internal hosts/ports out of the browser bundle.
 // In local dev (Vite) the proxy rewrites /api -> http://localhost:8080.
-const usersConfigApiUrl = import.meta.env.VITE_USERS_CONFIG_API_URL ?? "/api";
+const usersConfigApiUrl = import.meta.env.VITE_USERS_CONFIG_API_URL || "/api";
 
 export const etoroApi = createApi({
   reducerPath: "etoroApi",
