@@ -48,6 +48,57 @@ export function SignalBadge({ action }: { action: string }) {
   return <span className="signal-badge signal-hold">HOLD</span>;
 }
 
+export function FeedDiagnostics({ diag }: { diag: any }) {
+  if (!diag || typeof diag !== "object") {
+    return null;
+  }
+
+  const age = diag.last_candle_age_seconds;
+  const hasExcludedCross = diag.last_crosses_up || diag.last_crosses_down;
+  const hasEvaluatedCross = diag.evaluated_crosses_up || diag.evaluated_crosses_down;
+  const feedStale = age != null && age > 300;
+
+  return (
+    <div className="feed-diagnostics">
+      <h4>Feed / Diagnóstico</h4>
+      <table className="user-table conditions-table feed-diag-table">
+        <tbody>
+          <tr>
+            <td>Vela evaluación (2ª última)</td>
+            <td>{diag.penultimate_candle_time ?? "—"}</td>
+          </tr>
+          <tr>
+            <td>Vela excluida (última)</td>
+            <td>{diag.last_candle_time ?? "—"}</td>
+          </tr>
+          <tr>
+            <td>Edad vela excluida</td>
+            <td className={feedStale ? "diag-warn" : ""}>
+              {age != null ? `${age}s${feedStale ? " ⚠ >300s (vela cerrada descartada)" : ""}` : "—"}
+            </td>
+          </tr>
+          <tr>
+            <td>Cruce en vela excluida</td>
+            <td className={hasExcludedCross ? "diag-warn" : ""}>
+              {hasExcludedCross
+                ? `⚠ up=${diag.last_crosses_up ? "Sí" : "No"}, down=${diag.last_crosses_down ? "Sí" : "No"}`
+                : "No"}
+            </td>
+          </tr>
+          <tr>
+            <td>Cruce en vela evaluada</td>
+            <td>
+              {hasEvaluatedCross
+                ? `up=${diag.evaluated_crosses_up ? "Sí" : "No"}, down=${diag.evaluated_crosses_down ? "Sí" : "No"}`
+                : "No"}
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 export function ConditionsTable({ context }: { context: any }) {
   if (!context || typeof context !== "object") {
     return null;
@@ -94,6 +145,9 @@ export function ConditionsTable({ context }: { context: any }) {
           ))}
         </tbody>
       </table>
+      {context.feed_diagnostics && (
+        <FeedDiagnostics diag={context.feed_diagnostics} />
+      )}
     </div>
   );
 }

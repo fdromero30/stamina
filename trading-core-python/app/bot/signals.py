@@ -6,6 +6,7 @@ No randomness, no external API calls — just math.
 """
 
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from decimal import Decimal
 from enum import Enum
 from typing import Any, Optional
@@ -304,6 +305,65 @@ def calculate_breakeven_stop_loss(
         return round(entry_price - spread, 5)
 
 
+# ── Feed Diagnostics (instrumentación) ───────────────────────────────────
+
+
+def _build_feed_diagnostics(
+    candles: list[Candle],
+    closes: list[float],
+    ma_short_aligned: list[float],
+) -> dict[str, Any]:
+    """Snapshot de diagnóstico del feed de velas (NO invasivo)."""
+    now_utc = datetime.now(timezone.utc)
+    diag: dict[str, Any] = {"now_utc": now_utc.isoformat(), "interval_hint_seconds": 300}
+
+    if len(candles) < 2:
+        return diag
+
+    last = candles[-1]
+    prev = candles[-2]
+
+    last_age_seconds: Optional[int] = None
+    ts = last.timestamp
+    if ts is not None:
+        try:
+            if isinstance(ts, str) and ts.isdigit():
+                ts_sec = float(ts) / 1000 if len(ts) >= 13 else float(ts)
+                last_open = datetime.fromtimestamp(ts_sec, tz=timezone.utc)
+            else:
+                iso = str(ts).replace("Z", "+00:00")
+                if "+" in iso:
+                    base, _, tz_part = iso.partition("+")
+                    if "." in base:
+                        int_part, _, frac = base.partition(".")
+                        base = f"{int_part}.{frac[:3]}"
+                    iso = f"{base}+{tz_part}"
+                last_open = datetime.fromisoformat(iso)
+            last_age_seconds = max(0, int((now_utc - last_open).total_seconds()))
+        except Exception:
+            last_age_seconds = None
+
+    diag.update({
+        "last_candle_time": last.timestamp,
+        "last_candle_age_seconds": last_age_seconds,
+        "last_close": round(last.close, 5),
+        "last_ma9": round(ma_short_aligned[-1], 5) if len(ma_short_aligned) > 0 else None,
+        "penultimate_candle_time": prev.timestamp,
+        "penultimate_close": round(prev.close, 5),
+        "penultimate_ma9": round(ma_short_aligned[-2], 5) if len(ma_short_aligned) > 1 else None,
+    })
+
+    if len(closes) >= 2 and len(ma_short_aligned) >= 2:
+        diag["last_crosses_up"] = closes[-1] > ma_short_aligned[-1] and closes[-2] <= ma_short_aligned[-2]
+        diag["last_crosses_down"] = closes[-1] < ma_short_aligned[-1] and closes[-2] >= ma_short_aligned[-2]
+
+    if len(closes) >= 3 and len(ma_short_aligned) >= 3:
+        diag["evaluated_crosses_up"] = closes[-2] > ma_short_aligned[-2] and closes[-3] <= ma_short_aligned[-3]
+        diag["evaluated_crosses_down"] = closes[-2] < ma_short_aligned[-2] and closes[-3] >= ma_short_aligned[-3]
+
+    return diag
+
+
 # ── Main Evaluator ───────────────────────────────────────────────────────
 
 
@@ -414,6 +474,8 @@ def evaluate_ma_strategy(
         "swing_lookback": swing_lookback,
         "crossover_window": crossover_window,
         "risk_reward_ratio": risk_reward_ratio,
+        # Diagnóstico del feed (no invasivo) para depurar cruces perdidos
+        "feed_diagnostics": _build_feed_diagnostics(candles, closes, ma_short_aligned),
     }
 
     if len(candles) < strategy.ma_long_period + 10:
@@ -429,6 +491,20 @@ def evaluate_ma_strategy(
         )
 
     if crossover is None:
+        # Incluir diagnóstico del feed en el reason para visibilidad inmediata
+        diag: dict[str, Any] = context.get("feed_diagnostics") or {}
+        reason_parts = ["No MA crossover detected"]
+        if diag.get("last_crosses_up") or diag.get("last_crosses_down"):
+            reason_parts.append(
+                f"cruce-en-EXCLUIDA(up={diag.get('last_crosses_up')},down={diag.get('last_crosses_down')})"
+            )
+        if diag.get("evaluated_crosses_up") or diag.get("evaluated_crosses_down"):
+            reason_parts.append(
+                f"cruce-en-evaluada(up={diag.get('evaluated_crosses_up')},down={diag.get('evaluated_crosses_down')})"
+            )
+        if diag.get("last_candle_age_seconds") is not None:
+            age = diag["last_candle_age_seconds"]
+            reason_parts.append(f"last_candle_age={age}s{'>300' if age > 300 else ''}")
         return Signal(
             action=SignalAction.HOLD,
             confidence=0.0,
@@ -436,7 +512,7 @@ def evaluate_ma_strategy(
             entry_price=0.0,
             stop_loss=None,
             take_profit=None,
-            reason="No MA crossover detected",
+            reason=" | ".join(reason_parts),
             context=context,
         )
 
