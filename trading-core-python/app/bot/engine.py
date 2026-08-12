@@ -23,6 +23,8 @@ from app.bot.signals import (
     evaluate_ma_strategy,
     calculate_breakeven_stop_loss,
     calculate_take_profit,
+    compute_sma,
+    compute_atr,
     find_swing_low,
     find_swing_high,
 )
@@ -457,7 +459,7 @@ class TradingBotEngine:
         entry: float,
         is_buy: bool,
     ) -> tuple[Optional[float], Optional[float]]:
-        """Recompute SL (swing) and TP (2:1 risk:reward) from current candles."""
+        """Recompute SL (ATR-based: MA200 ∓ mult×ATR14) and TP (2:1) from candles."""
         try:
             candles = await self._market_data_client.get_candles(
                 user_id=user_id,
@@ -468,13 +470,31 @@ class TradingBotEngine:
             if not candles:
                 return None, None
 
-            if is_buy:
-                sl = find_swing_low(candles, settings.swing_lookback_candles)
-            else:
-                sl = find_swing_high(candles, settings.swing_lookback_candles)
-
-            if sl is None:
+            # MA200 (último valor alineado)
+            closes = [c.close for c in candles]
+            ma_long = compute_sma(closes, settings.default_ma_long)
+            if not ma_long:
                 return None, None
+            trend_ma200 = ma_long[-1]
+
+            atr = compute_atr(candles, settings.atr_period)
+            if atr is None:
+                return None, None
+
+            if is_buy:
+                sl = trend_ma200 - settings.sl_atr_multiplier * atr
+            else:
+                sl = trend_ma200 + settings.sl_atr_multiplier * atr
+
+            # Piso de seguridad (distancia mínima SL vs entry)
+            min_sl_distance = settings.sl_min_distance_pips * 0.0001
+            if abs(sl - entry) < min_sl_distance:
+                if is_buy:
+                    sl = entry - min_sl_distance
+                else:
+                    sl = entry + min_sl_distance
+
+            # Validar dirección
             if (is_buy and sl >= entry) or (not is_buy and sl <= entry):
                 return None, None
 
@@ -596,6 +616,8 @@ class TradingBotEngine:
                 risk_reward_ratio=settings.risk_reward_ratio,
                 atr_period=settings.atr_period,
                 max_candle_expansion_atr_mult=settings.max_candle_expansion_atr_mult,
+                sl_atr_multiplier=settings.sl_atr_multiplier,
+                sl_min_distance_pips=settings.sl_min_distance_pips,
             )
 
             result["signal"] = {

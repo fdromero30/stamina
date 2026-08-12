@@ -552,6 +552,134 @@ def test_expansion_filter_rejects_oversized_candle():
     print("  ✓ Expansion filter: correctly rejected the oversized candle")
 
 
+def test_sl_atr_based_buy():
+    """
+    Test that BUY signals use the ATR-based SL rule:
+    SL = MA200 − (sl_atr_multiplier × ATR14)
+    and that the risk is exactly 0.5% of the account balance.
+    """
+    random.seed(42)
+    candles = generate_mock_candles_with_crossover(
+        count=300, trend="uptrend", ma_short=9, ma_long=200
+    )
+
+    strategy = StrategyConfig(
+        id="test-atr-buy",
+        user_id="user-1",
+        symbol="EUR/USD",
+        enabled=True,
+        ma_short_period=9,
+        ma_long_period=200,
+        max_position_size=1000.0,
+        max_open_positions=2,
+        stop_loss=None,
+        take_profit=None,
+        break_even_trigger=1.5,
+        use_ml=False,
+        ml_strategy_code=None,
+    )
+
+    market_data = MarketData(
+        bid=candles[-1].close - 0.0001,
+        ask=candles[-1].close + 0.0001,
+        instrument_id=12345,
+    )
+
+    signal = evaluate_ma_strategy(
+        strategy=strategy,
+        candles=candles,
+        market_data=market_data,
+        account_balance=10000.0,
+        open_positions_count=0,
+        sl_atr_multiplier=1.5,
+        sl_min_distance_pips=10.0,
+    )
+
+    print(f"  Signal: {signal.action.value}")
+    print(f"  SL: {signal.stop_loss}")
+    print(f"  Context: {signal.context}")
+
+    if signal.action == SignalAction.BUY:
+        # SL debe ser MA200 − 1.5×ATR (o el piso de 10 pips si es menor)
+        assert signal.stop_loss is not None
+        assert signal.stop_loss < signal.entry_price, "SL < entry for BUY"
+        # Distancia mínima de 10 pips
+        sl_distance_pips = abs(signal.entry_price - signal.stop_loss) / 0.0001
+        assert sl_distance_pips >= 10.0, f"SL distance {sl_distance_pips} pips < 10 min"
+        # Riesgo exacto 0.5% del balance
+        risk_amount = abs(signal.entry_price - signal.stop_loss) * signal.units
+        expected_risk = 10000.0 * 0.005
+        assert abs(risk_amount - expected_risk) < 1.0, \
+            f"Risk {risk_amount} != expected {expected_risk}"
+        # Context debe indicar la base ATR
+        assert signal.context.get("sl_basis") == "ma200_atr"
+        assert signal.context.get("atr_multiplier") == 1.5
+        print("  ✓ ATR-based SL (BUY): all assertions passed")
+    else:
+        print("  ⚠ HOLD: no crossover detected in this run")
+
+
+def test_sl_atr_based_sell():
+    """
+    Test that SELL signals use the ATR-based SL rule:
+    SL = MA200 + (sl_atr_multiplier × ATR14)
+    and that the risk is exactly 0.5% of the account balance.
+    """
+    random.seed(42)
+    candles = generate_mock_candles_with_crossover(
+        count=300, trend="downtrend", ma_short=9, ma_long=200
+    )
+
+    strategy = StrategyConfig(
+        id="test-atr-sell",
+        user_id="user-1",
+        symbol="EUR/USD",
+        enabled=True,
+        ma_short_period=9,
+        ma_long_period=200,
+        max_position_size=1000.0,
+        max_open_positions=2,
+        stop_loss=None,
+        take_profit=None,
+        break_even_trigger=1.5,
+        use_ml=False,
+        ml_strategy_code=None,
+    )
+
+    market_data = MarketData(
+        bid=candles[-1].close - 0.0001,
+        ask=candles[-1].close + 0.0001,
+        instrument_id=12345,
+    )
+
+    signal = evaluate_ma_strategy(
+        strategy=strategy,
+        candles=candles,
+        market_data=market_data,
+        account_balance=10000.0,
+        open_positions_count=0,
+        sl_atr_multiplier=1.5,
+        sl_min_distance_pips=10.0,
+    )
+
+    print(f"  Signal: {signal.action.value}")
+    print(f"  SL: {signal.stop_loss}")
+
+    if signal.action == SignalAction.SELL:
+        assert signal.stop_loss is not None
+        assert signal.stop_loss > signal.entry_price, "SL > entry for SELL"
+        sl_distance_pips = abs(signal.entry_price - signal.stop_loss) / 0.0001
+        assert sl_distance_pips >= 10.0, f"SL distance {sl_distance_pips} pips < 10 min"
+        risk_amount = abs(signal.entry_price - signal.stop_loss) * signal.units
+        expected_risk = 10000.0 * 0.005
+        assert abs(risk_amount - expected_risk) < 1.0, \
+            f"Risk {risk_amount} != expected {expected_risk}"
+        assert signal.context.get("sl_basis") == "ma200_atr"
+        print("  ✓ ATR-based SL (SELL): all assertions passed")
+    else:
+        print("  ⚠ HOLD: no crossover detected in this run")
+
+
 if __name__ == "__main__":
     print("=" * 60)
     print("  Deterministic Signal Engine - Test Suite")
@@ -589,6 +717,14 @@ if __name__ == "__main__":
 
     print("[8/8] Testing expansion filter (ATR)...")
     test_expansion_filter_rejects_oversized_candle()
+    print()
+
+    print("[9/9] Testing ATR-based SL (BUY)...")
+    test_sl_atr_based_buy()
+    print()
+
+    print("[10/10] Testing ATR-based SL (SELL)...")
+    test_sl_atr_based_sell()
     print()
 
     print("=" * 60)

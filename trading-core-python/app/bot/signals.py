@@ -443,6 +443,8 @@ def evaluate_ma_strategy(
     risk_reward_ratio: float = 2.0,
     atr_period: int = 14,
     max_candle_expansion_atr_mult: float = 1.8,
+    sl_atr_multiplier: float = 1.5,
+    sl_min_distance_pips: float = 10.0,
 ) -> Signal:
     """
     Evaluate the MA200 + MA9 strategy.
@@ -640,121 +642,116 @@ def evaluate_ma_strategy(
     limit_price = round(crossover_close, 5)
     entry_price = limit_price
 
-    if crossover == "bullish" and price_above_ma200:
-        # BUY signal: price above MA200 and crossed above MA9
-        stop_loss = find_swing_low(candles, swing_lookback)
-        if stop_loss is None or stop_loss >= entry_price:
-            return Signal(
-                action=SignalAction.HOLD,
-                confidence=0.0,
-                units=0.0,
-                entry_price=0.0,
-                stop_loss=None,
-                take_profit=None,
-                reason="No valid swing low found for SL placement",
-                context=context,
-            )
+    # ── SL: ATR-based (regla: SL = MA200 ∓ sl_atr_multiplier × ATR14) ──
+    # El ATR ya se calculó arriba para el filtro de expansión.  Para dar
+    # "aire" al SL y que eToro no lo rechace:
+    #   BUY  → SL = MA200 − (mult × ATR14)
+    #   SELL → SL = MA200 + (mult × ATR14)
+    is_buy = crossover == "bullish"
 
-        take_profit = calculate_take_profit(
-            entry_price, stop_loss, risk_reward_ratio, is_buy=True
-        )
-        units = calculate_units(account_balance, risk_per_trade, entry_price, stop_loss)
-
-        if units <= 0:
-            return Signal(
-                action=SignalAction.HOLD,
-                confidence=0.0,
-                units=0.0,
-                entry_price=0.0,
-                stop_loss=None,
-                take_profit=None,
-                reason=f"Calculated units too low: {units}",
-                context=context,
-            )
-
-        context.update({
-            "entry_price": entry_price,
-            "stop_loss": stop_loss,
-            "take_profit": take_profit,
-            "units": units,
-        })
-
+    if atr is None:
         return Signal(
-            action=SignalAction.BUY,
-            confidence=0.8,
-            units=units,
-            entry_price=entry_price,
-            stop_loss=stop_loss,
-            take_profit=take_profit,
-            reason=f"BUY: price {trend_price:.5f} > MA200 {trend_ma200:.5f}, "
-                   f"crossed above MA9. Limit={limit_price:.5f}, SL={stop_loss:.5f}, TP={take_profit:.5f}",
+            action=SignalAction.HOLD,
+            confidence=0.0,
+            units=0.0,
+            entry_price=0.0,
+            stop_loss=None,
+            take_profit=None,
+            reason="ATR unavailable, cannot place SL",
             context=context,
-            order_type="limit",
-            limit_price=limit_price,
         )
 
-    elif crossover == "bearish" and price_below_ma200:
-        # SELL signal: price below MA200 and crossed below MA9
-        stop_loss = find_swing_high(candles, swing_lookback)
-        if stop_loss is None or stop_loss <= entry_price:
-            return Signal(
-                action=SignalAction.HOLD,
-                confidence=0.0,
-                units=0.0,
-                entry_price=0.0,
-                stop_loss=None,
-                take_profit=None,
-                reason="No valid swing high found for SL placement",
-                context=context,
-            )
+    # pips → precio (1 pip = 0.0001 en pares con 4 decimales)
+    min_sl_distance_price = sl_min_distance_pips * 0.0001
 
-        take_profit = calculate_take_profit(
-            entry_price, stop_loss, risk_reward_ratio, is_buy=False
-        )
-        units = calculate_units(account_balance, risk_per_trade, entry_price, stop_loss)
+    if is_buy:
+        stop_loss = trend_ma200 - sl_atr_multiplier * atr
+    else:
+        stop_loss = trend_ma200 + sl_atr_multiplier * atr
 
-        if units <= 0:
-            return Signal(
-                action=SignalAction.HOLD,
-                confidence=0.0,
-                units=0.0,
-                entry_price=0.0,
-                stop_loss=None,
-                take_profit=None,
-                reason=f"Calculated units too low: {units}",
-                context=context,
-            )
+    sl_distance = abs(stop_loss - entry_price)
 
+    # Piso de seguridad: si MA200 ∓ ATR deja el SL demasiado cerca del entry,
+    # expandirlo a la distancia mínima para que eToro no rechace la orden.
+    if sl_distance < min_sl_distance_price:
+        if is_buy:
+            stop_loss = entry_price - min_sl_distance_price
+        else:
+            stop_loss = entry_price + min_sl_distance_price
+        sl_distance = abs(stop_loss - entry_price)
+
+    # Validar dirección: BUY → SL < entry; SELL → SL > entry
+    if (is_buy and stop_loss >= entry_price) or (not is_buy and stop_loss <= entry_price):
         context.update({
-            "entry_price": entry_price,
-            "stop_loss": stop_loss,
-            "take_profit": take_profit,
-            "units": units,
+            "sl_basis": "ma200_atr",
+            "atr_value": round(atr, 5),
+            "atr_multiplier": round(sl_atr_multiplier, 3),
+            "sl_value": round(stop_loss, 5),
+            "min_sl_distance_pips": sl_min_distance_pips,
+            "sl_reason": "SL direction invalid relative to entry",
         })
-
         return Signal(
-            action=SignalAction.SELL,
-            confidence=0.8,
-            units=units,
-            entry_price=entry_price,
-            stop_loss=stop_loss,
-            take_profit=take_profit,
-            reason=f"SELL: price {trend_price:.5f} < MA200 {trend_ma200:.5f}, "
-                   f"crossed below MA9. Limit={limit_price:.5f}, SL={stop_loss:.5f}, TP={take_profit:.5f}",
+            action=SignalAction.HOLD,
+            confidence=0.0,
+            units=0.0,
+            entry_price=0.0,
+            stop_loss=None,
+            take_profit=None,
+            reason=(
+                f"Invalid SL direction for {'BUY' if is_buy else 'SELL'}: "
+                f"SL={stop_loss:.5f}, entry={entry_price:.5f}"
+            ),
             context=context,
-            order_type="limit",
-            limit_price=limit_price,
         )
 
-    # Signal direction doesn't match trend
+    take_profit = calculate_take_profit(
+        entry_price, stop_loss, risk_reward_ratio, is_buy=is_buy
+    )
+    units = calculate_units(account_balance, risk_per_trade, entry_price, stop_loss)
+
+    if units <= 0:
+        return Signal(
+            action=SignalAction.HOLD,
+            confidence=0.0,
+            units=0.0,
+            entry_price=0.0,
+            stop_loss=None,
+            take_profit=None,
+            reason=f"Calculated units too low: {units}",
+            context=context,
+        )
+
+    context.update({
+        "entry_price": entry_price,
+        "stop_loss": stop_loss,
+        "take_profit": take_profit,
+        "units": units,
+        "sl_basis": "ma200_atr",
+        "atr_value": round(atr, 5),
+        "atr_multiplier": round(sl_atr_multiplier, 3),
+        "sl_distance_pips": round(sl_distance / 0.0001, 2),
+        "min_sl_distance_pips": sl_min_distance_pips,
+    })
+
+    action = SignalAction.BUY if is_buy else SignalAction.SELL
+    direction_word = "above" if is_buy else "below"
+    comp_word = ">" if is_buy else "<"
+    reason = (
+        f"{action.name}: price {trend_price:.5f} {comp_word} MA200 {trend_ma200:.5f}, "
+        f"crossed {direction_word} MA9. Limit={limit_price:.5f}, "
+        f"SL={stop_loss:.5f} (MA200 {'∓' if is_buy else '∓'} {sl_atr_multiplier}×ATR), "
+        f"TP={take_profit:.5f}"
+    )
+
     return Signal(
-        action=SignalAction.HOLD,
-        confidence=0.0,
-        units=0.0,
-        entry_price=0.0,
-        stop_loss=None,
-        take_profit=None,
-        reason=f"Crossover direction ({crossover}) doesn't match trend "
-               f"(above_MA200={price_above_ma200})",
+        action=action,
+        confidence=0.8,
+        units=units,
+        entry_price=entry_price,
+        stop_loss=stop_loss,
+        take_profit=take_profit,
+        reason=reason,
         context=context,
+        order_type="limit",
+        limit_price=limit_price,
     )

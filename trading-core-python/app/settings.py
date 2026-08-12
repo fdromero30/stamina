@@ -7,7 +7,7 @@ class Settings(BaseSettings):
 
     # ── Trading Cycle ─────────────────────────────────────────────────
     trading_interval_seconds: int = 300  # 5 minutes default
-    default_leverage: int = 1
+    default_leverage: int = 5  # 5x leverage (fixed for all operations)
     # Execute trades against the eToro DEMO account (the whole stack runs
     # in demo mode; real execution routes return 404 RouteNotFound for
     # demo keys).
@@ -15,6 +15,16 @@ class Settings(BaseSettings):
     risk_per_trade: float = 0.005  # 0.5% of available account per trade
     max_open_positions: int = 2
     break_even_ratio: float = 1.5  # Legacy: retained for backward compatibility
+
+    # ── Stop Loss — ATR-based (regla: SL = MA200 ∓ ATR × multiplier) ──
+    # El ATR(14) mide cuánto se mueve el activo en promedio por vela.
+    # Para dar "aire" al SL y que no sea rechazado por eToro:
+    #   BUY  → SL = MA200 − ATR14 × sl_atr_multiplier
+    #   SELL → SL = MA200 + ATR14 × sl_atr_multiplier
+    sl_atr_multiplier: float = 1.5
+    # Distancia mínima entre el entry y el SL (en pips) para evitar
+    # rechazo del broker (eToro exige un mínimo).
+    sl_min_distance_pips: float = 10.0
 
     # ── Transversal Risk Management (máquina de estados + trailing ATR) ─
     # Defaults — overridable per strategy via the Java backend.
