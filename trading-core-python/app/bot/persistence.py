@@ -494,6 +494,14 @@ def update_position_state(
     )
 
 
+def delete_position(user_id: str, position_id: int) -> None:
+    """Remove a tracked position/order from the persistence store."""
+    db.execute(
+        "DELETE FROM open_positions WHERE user_id = ? AND position_id = ?",
+        (user_id, position_id),
+    )
+
+
 def load_open_positions() -> dict[str, list[dict[str, Any]]]:
     rows = db.query("SELECT * FROM open_positions ORDER BY opened_at DESC")
     positions: dict[str, list[dict[str, Any]]] = {}
@@ -515,6 +523,9 @@ def load_open_positions() -> dict[str, list[dict[str, Any]]]:
             "highest_price": row.get("highest_price"),
             "lowest_price": row.get("lowest_price"),
             "spread_real": row.get("spread_real"),
+            "order_type": "market",
+            "units": row.get("units", 0) if "units" in row else 0.0,
+            "is_pending_order": False,
         })
     return positions
 

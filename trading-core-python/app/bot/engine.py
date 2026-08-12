@@ -7,6 +7,13 @@ from typing import Any, Optional
 import httpx
 
 from app.bot import persistence
+from app.bot.news_calendar import (
+    NewsCalendarClient,
+    NewsEvent,
+    find_active_blackout,
+    is_time_for_reopen_spread_check,
+    seconds_until,
+)
 from app.bot.signals import (
     Signal,
     SignalAction,
@@ -24,6 +31,7 @@ from app.integrations.orders_client import EtoroHttpClient
 from app.integrations.strategies_client import StrategiesClient, StrategyConfigDTO
 from app.integrations.symbol_resolver import SymbolResolver
 from app.risk import PositionRiskManager, PositionRiskState
+from app.risk.state_machine import compute_risk_from_price
 from app.settings import settings
 
 logger = logging.getLogger(__name__)
@@ -33,6 +41,10 @@ try:
     import pytz
     HAS_PYTZ = True
 except ImportError:
+    # Always bind ``pytz`` (to None) so Pylance never sees it as
+    # "possibly unbound" — the ``HAS_PYTZ and pytz is not None`` guards
+    # keep the runtime safe.
+    pytz = None  # type: ignore[assignment]
     HAS_PYTZ = False
     logger.warning("pytz not available, trading hours check will use UTC")
 
@@ -55,11 +67,22 @@ class TradingBotEngine:
         market_data_client: MarketDataClient,
         etoro_http_client: EtoroHttpClient,
         base_url: str,
+        news_client: Optional[NewsCalendarClient] = None,
     ) -> None:
         self._strategies_client = strategies_client
         self._market_data_client = market_data_client
         self._etoro_http_client = etoro_http_client
         self._base_url = base_url.rstrip("/")
+        self._news_client = news_client or NewsCalendarClient(
+            url=settings.news_calendar_url,
+            refresh_after_idle_minutes=settings.news_refresh_after_idle_minutes,
+            fail_mode=settings.news_fetch_fail_mode,
+        )
+        # Track which blackout event we already handled (protection applied
+        # only once per event window).
+        self._handled_blackout_key: Optional[str] = None
+        # Number of consecutive cycles skipped due to a wide spread after reopen.
+        self._reopen_spread_retries = 0
         # Shared symbol resolver (optional; set by main.py).  Uses the same
         # cache as the chart endpoint so symbol mapping is consistent.
         self.symbol_resolver: Optional[SymbolResolver] = None
@@ -83,6 +106,11 @@ class TradingBotEngine:
     def open_positions(self) -> dict[str, list[dict[str, Any]]]:
         """Return the in-memory open positions tracker (per user)."""
         return self._open_positions
+
+    @property
+    def news_client(self) -> NewsCalendarClient:
+        """Return the news calendar client (for observability / status)."""
+        return self._news_client
 
     async def get_active_strategy(self) -> dict[str, Any]:
         """Return the strategy currently active (or the default hardcoded one)."""
@@ -123,6 +151,76 @@ class TradingBotEngine:
                 "reason": "Outside trading hours",
                 "next_run_seconds": next_in,
             }
+
+        now_utc = datetime.now(timezone.utc)
+
+        # ── News blackout (alto riesgo) ───────────────────────────────
+        # Consulta el calendario económico (caché primero; HTTP solo en
+        # arranque, long-sleep y prefetch −5min).  Si estamos dentro de un
+        # blackout High de EUR/USD, el bot se detiene y duerme hasta el
+        # final de la ventana (evento + 30 min).
+        try:
+            events = await self._news_client.get_relevant_events(now_utc)
+        except Exception as e:
+            logger.warning("News calendar check failed: %s", e)
+            events = []
+
+        blackout = find_active_blackout(
+            events,
+            now_utc,
+            before_minutes=settings.news_blackout_before_minutes,
+            after_minutes=settings.news_blackout_after_minutes,
+        )
+        if blackout is not None:
+            ev, window_start, window_end = blackout
+            key = f"{ev.event_time_utc.isoformat()}|{ev.title}"
+            if (
+                self._handled_blackout_key != key
+                and settings.news_blackout_protect_positions
+            ):
+                await self._apply_news_blackout_protection(ev)
+                self._handled_blackout_key = key
+            next_in = seconds_until(window_end, now_utc)
+            logger.info(
+                "News blackout: %s (%s) at %s — sleeping %.1f min until reopen",
+                ev.title,
+                ev.country,
+                ev.event_time_utc.isoformat(),
+                next_in / 60,
+            )
+            return {
+                "skipped": True,
+                "reason": f"News blackout: {ev.title} ({ev.country})",
+                "next_run_seconds": next_in,
+                "blackout_event": {
+                    "title": ev.title,
+                    "country": ev.country,
+                    "event_time": ev.event_time_utc.isoformat(),
+                    "window_start": window_start.isoformat(),
+                    "window_end": window_end.isoformat(),
+                },
+            }
+
+        # ── Reapertura: verificar spread antes de reanudar ────────────
+        if is_time_for_reopen_spread_check(
+            events,
+            now_utc,
+            after_minutes=settings.news_blackout_after_minutes,
+            grace_minutes=settings.news_reopen_spread_check_minutes,
+        ):
+            spread_normal = await self._check_reopen_spread()
+            if not spread_normal:
+                self._reopen_spread_retries += 1
+                logger.warning(
+                    "Spread still wide after news (retry %d) — skipping cycle",
+                    self._reopen_spread_retries,
+                )
+                return {
+                    "skipped": True,
+                    "reason": "Spread above news_reopen_max_spread_pips after news blackout",
+                    "next_run_seconds": settings.trading_interval_seconds,
+                }
+            self._reopen_spread_retries = 0
 
         results: dict[str, Any] = {
             "evaluations": [],
@@ -519,7 +617,8 @@ class TradingBotEngine:
                 result["trade_result"] = trade_result
 
                 if trade_result.get("success") and trade_result.get("position_id"):
-                    # Track the position in memory
+                    # Track the position in memory (limit orders are pending
+                    # until filled — flagged so the news blackout can cancel them)
                     self._track_position(
                         user_id=uid,
                         position_id=trade_result["position_id"],
@@ -527,6 +626,8 @@ class TradingBotEngine:
                         stop_loss=signal.stop_loss,
                         take_profit=signal.take_profit,
                         is_buy=signal.action == SignalAction.BUY,
+                        order_type=signal.order_type,
+                        units=signal.units,
                     )
             else:
                 result["trade_executed"] = False
@@ -655,10 +756,17 @@ class TradingBotEngine:
         stop_loss: Optional[float],
         take_profit: Optional[float],
         is_buy: bool,
+        order_type: str = "market",
+        units: float = 0.0,
     ) -> None:
-        """Track an open position in memory."""
+        """Track an open position (or pending limit order) in memory."""
         if user_id not in self._open_positions:
             self._open_positions[user_id] = []
+
+        # Limit orders are PENDING (not open positions) until filled —
+        # flagged so the news blackout can cancel them and so they are not
+        # counted as open positions for the max-positions check.
+        is_pending = order_type == "limit"
 
         position = {
             "position_id": position_id,
@@ -675,6 +783,10 @@ class TradingBotEngine:
             "highest_price": None,
             "lowest_price": None,
             "spread_real": None,
+            # Order metadata
+            "order_type": order_type,
+            "units": units,
+            "is_pending_order": is_pending,
         }
         self._open_positions[user_id].append(position)
 
@@ -776,6 +888,164 @@ class TradingBotEngine:
         # engine already resolved the instrument at trade time.
         return "EUR/USD"
 
+    # ── Internal: News Blackout Protection ─────────────────────────────
+
+    async def _apply_news_blackout_protection(self, event: NewsEvent) -> None:
+        """
+        Execute the INICIO PAUSA policy before a High-impact news event:
+        1. Cancel pending limit orders.
+        2. Move open positions in profit to breakeven (or close 50% when
+           configured).
+        Positions in loss keep their original stop loss.
+        """
+        logger.info(
+            "Applying news blackout protection for %s (%s) at %s",
+            event.title, event.country, event.event_time_utc.isoformat(),
+        )
+        for user_id, positions in list(self._open_positions.items()):
+            # 1. Cancel pending limit orders
+            pending = [p for p in positions if p.get("is_pending_order")]
+            for pos in pending:
+                order_id = pos.get("position_id")
+                if order_id is None:
+                    continue
+                try:
+                    await self._etoro_http_client.cancel_order(
+                        user_id, int(order_id), demo=True
+                    )
+                    logger.info("Cancelled pending order %s for user %s", order_id, user_id)
+                except Exception as e:
+                    logger.warning("Failed to cancel pending order %s: %s", order_id, e)
+                # Remove from tracker (order no longer exists) regardless
+                self._open_positions[user_id] = [
+                    p for p in self._open_positions.get(user_id, [])
+                    if p.get("position_id") != pos.get("position_id")
+                ]
+                persistence.delete_position(user_id, int(order_id))
+
+            # 2. Protect open (real) positions — breakeven if in profit
+            if not settings.news_blackout_protect_positions:
+                continue
+            current_positions = self._open_positions.get(user_id, [])
+            for pos in current_positions:
+                if pos.get("is_pending_order"):
+                    continue
+                try:
+                    await self._protect_position_before_news(user_id, pos)
+                except Exception as e:
+                    logger.warning(
+                        "Failed to protect position %s for user %s: %s",
+                        pos.get("position_id"), user_id, e,
+                    )
+
+    async def _protect_position_before_news(
+        self,
+        user_id: str,
+        pos: dict[str, Any],
+    ) -> None:
+        """Move an open position to breakeven if it is in profit (R >= 0)."""
+        instrument_id = await self._resolve_instrument_id(
+            user_id, self._symbol_for_position(pos)
+        )
+        if instrument_id is None:
+            return
+
+        rates = await self._market_data_client.get_rates(user_id, [instrument_id])
+        if not rates:
+            logger.warning("No rates available to protect position %s", pos.get("position_id"))
+            return
+        r0 = rates[0]
+
+        position_state = PositionRiskState(
+            position_id=int(pos["position_id"]),
+            user_id=user_id,
+            entry_price=pos["entry_price"],
+            sl_original=pos.get("sl_original") or pos["stop_loss"],
+            tp_fixed=pos.get("tp_fixed"),
+            is_buy=pos["is_buy"],
+            state=pos.get("state", 0),
+            highest_price=pos.get("highest_price"),
+            lowest_price=pos.get("lowest_price"),
+            sl_current=pos.get("stop_loss"),
+            spread_real=pos.get("spread_real"),
+        )
+
+        current_price = r0.bid if pos["is_buy"] else r0.ask
+        risk = abs(position_state.entry_price - position_state.sl_original)
+        if risk <= 0:
+            return
+
+        r = compute_risk_from_price(position_state, current_price)
+        if r < 0:
+            logger.info(
+                "Position %s in loss (R=%.3f) — keeping original SL",
+                pos["position_id"], r,
+            )
+            return
+
+        # In profit → move SL to breakeven (+ spread)
+        spread = abs(r0.ask - r0.bid)
+        if pos["is_buy"]:
+            be_sl = round(pos["entry_price"] + spread, 5)
+        else:
+            be_sl = round(pos["entry_price"] - spread, 5)
+
+        try:
+            await self._etoro_http_client.update_stop_loss(
+                user_id, int(pos["position_id"]), be_sl
+            )
+            pos["stop_loss"] = be_sl
+            pos["breakeven_applied"] = True
+            pos["spread_real"] = spread
+            persistence.update_position_state(
+                user_id=user_id,
+                position_id=int(pos["position_id"]),
+                state=max(pos.get("state", 0), 1),
+                stop_loss=be_sl,
+                take_profit=pos.get("take_profit"),
+                highest_price=pos.get("highest_price"),
+                lowest_price=pos.get("lowest_price"),
+                spread_real=spread,
+            )
+            logger.info(
+                "News protection: position %s moved to breakeven SL=%.5f (R=%.3f)",
+                pos["position_id"], be_sl, r,
+            )
+        except Exception as e:
+            logger.warning("Failed to move position %s to breakeven: %s", pos["position_id"], e)
+
+    async def _check_reopen_spread(self) -> bool:
+        """
+        After a news blackout, confirm the EUR/USD spread has returned to
+        normal before resuming trading.  Returns True when the spread is
+        within the configured maximum (in pips).
+        """
+        try:
+            instrument_id = await self._resolve_instrument_id(
+                "00000000-0000-0000-0000-000000000000", "EUR/USD"
+            )
+            if instrument_id is None:
+                return True  # cannot verify → allow trading
+            rates = await self._market_data_client.get_rates(
+                "00000000-0000-0000-0000-000000000000", [instrument_id]
+            )
+            if not rates:
+                return True  # cannot verify → allow trading (fail-open)
+            r0 = rates[0]
+            spread = abs(r0.ask - r0.bid)
+            max_spread = settings.news_reopen_max_spread_pips * 0.0001
+            normal = spread <= max_spread
+            logger.info(
+                "Reopen spread check: spread=%.5f pips=%.1f max=%.1f → %s",
+                spread, spread / 0.0001,
+                settings.news_reopen_max_spread_pips,
+                "normal" if normal else "still wide",
+            )
+            return normal
+        except Exception as e:
+            logger.warning("Failed to check reopen spread: %s", e)
+            return True  # fail-open on error
+
     # ── Internal: Portfolio Balance ────────────────────────────────────
 
     async def _get_available_balance(self, user_id: str, demo: bool = True) -> float:
@@ -837,7 +1107,7 @@ class TradingBotEngine:
         """
         now_utc = datetime.now(timezone.utc)
 
-        if HAS_PYTZ:
+        if HAS_PYTZ and pytz is not None:
             try:
                 eastern = pytz.timezone(settings.trading_timezone)
                 now_et = now_utc.astimezone(eastern)
@@ -876,7 +1146,7 @@ class TradingBotEngine:
         """
         now_utc = datetime.now(timezone.utc)
 
-        if HAS_PYTZ:
+        if HAS_PYTZ and pytz is not None:
             try:
                 eastern = pytz.timezone(settings.trading_timezone)
                 now_et = now_utc.astimezone(eastern)
@@ -910,7 +1180,7 @@ class TradingBotEngine:
 
         # Attach the ET timezone so the subtraction is DST-safe.
         try:
-            if HAS_PYTZ:
+            if HAS_PYTZ and pytz is not None:
                 et_timezone = pytz.timezone(settings.trading_timezone)
                 next_open_et = et_timezone.localize(next_open_naive)  # naive → aware ET
             else:

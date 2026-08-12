@@ -253,6 +253,19 @@ async def bot_status() -> dict[str, object]:
     """Get the current status of the trading scheduler."""
     # Estrategia activa (real o default EUR/USD)
     strategy = await engine.get_active_strategy()
+    # Próximo blackout por noticias High de EUR/USD (desde la caché local)
+    next_blackout = None
+    try:
+        upcoming = engine.news_client.next_upcoming_event(datetime.now(timezone.utc))
+        if upcoming is not None:
+            next_blackout = {
+                "title": upcoming.title,
+                "country": upcoming.country,
+                "event_time": upcoming.event_time_utc.isoformat(),
+                "impact": upcoming.impact,
+            }
+    except Exception:
+        logger.warning("Failed to resolve next blackout for status", exc_info=True)
     return {
         "running": scheduler.is_running,
         "interval_seconds": scheduler.interval_seconds,
@@ -261,6 +274,7 @@ async def bot_status() -> dict[str, object]:
         "next_run": scheduler.next_run.isoformat() if scheduler.next_run else None,
         "strategy": strategy,
         "run_id": getattr(scheduler, "_run_id", None),
+        "next_blackout": next_blackout,
     }
 
 

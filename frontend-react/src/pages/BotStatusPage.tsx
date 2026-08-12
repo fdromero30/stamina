@@ -234,6 +234,22 @@ export function BotStatusPage({ session }: BotStatusPageProps) {
                 <td><strong>Breakeven</strong></td>
                 <td>Move SL to breakeven at 1.5:1</td>
               </tr>
+              <tr>
+                <td><strong>Next News Blackout</strong></td>
+                <td>
+                  {effectiveStatus?.next_blackout ? (
+                    <>
+                      {effectiveStatus.next_blackout.title} ({effectiveStatus.next_blackout.country}) —{" "}
+                      {formatTime(effectiveStatus.next_blackout.event_time)}{" "}
+                      <span className="field-hint" style={{ display: "inline" }}>
+                        (bot pausa 30 min antes / 30 min después)
+                      </span>
+                    </>
+                  ) : (
+                    "No hay eventos High EUR/USD programados"
+                  )}
+                </td>
+              </tr>
             </tbody>
           </table>
         </div>

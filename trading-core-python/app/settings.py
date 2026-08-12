@@ -32,6 +32,21 @@ class Settings(BaseSettings):
     trading_window_end: str = "17:00"     # Friday 5pm ET
     trading_timezone: str = "US/Eastern"
 
+    # ── News Blackout (alto riesgo) ────────────────────────────────────
+    # El bot se detiene 30 min antes y 30 min después de eventos High de
+    # EUR/USD publicados en el calendario económico semanal.
+    news_calendar_url: str = "https://nfs.faireconomy.media/ff_calendar_thisweek.json"
+    news_blackout_before_minutes: int = 30
+    news_blackout_after_minutes: int = 30
+    news_prefetch_minutes: int = 5                 # 5 min antes del blackout → refresh del feed
+    news_relevant_countries: str = "EUR,USD"
+    news_impact_levels: str = "High"
+    news_refresh_after_idle_minutes: int = 60      # tras un long sleep → refresh
+    news_reopen_max_spread_pips: float = 3.0       # EUR/USD: 3 pips = 0.0003
+    news_reopen_spread_check_minutes: int = 5
+    news_blackout_protect_positions: bool = True
+    news_fetch_fail_mode: str = "fail_open"        # "fail_open" | "fail_closed"
+
     # ── Strategy Defaults ─────────────────────────────────────────────
     default_ma_short: int = 9
     default_ma_long: int = 200

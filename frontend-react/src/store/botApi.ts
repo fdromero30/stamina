@@ -8,6 +8,13 @@ import { tradingCoreUrl } from "../config";
 
 export type BotStrategy = { id: string; name: string; symbol: string; is_default: boolean };
 
+export type NextBlackout = {
+  title: string;
+  country: string;
+  event_time: string;
+  impact: string;
+};
+
 export type BotStatus = {
   running: boolean;
   interval_seconds: number;
@@ -16,6 +23,7 @@ export type BotStatus = {
   next_run: string | null;
   strategy?: BotStrategy;
   run_id?: string | null;
+  next_blackout?: NextBlackout | null;
 };
 
 export type BotRun = {
