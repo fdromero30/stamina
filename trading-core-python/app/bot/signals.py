@@ -157,11 +157,59 @@ def find_swing_high(candles: list[Candle], lookback: int) -> Optional[float]:
     return max(c.high for c in relevant)
 
 
+def candle_age_seconds(candle: Candle) -> Optional[int]:
+    """
+    Seconds elapsed since the candle's OPENING timestamp (UTC now).
+
+    Returns None if the timestamp cannot be parsed.
+    A closed M5 candle has age >= 300.  A forming candle has age < 300.
+    """
+    if candle.timestamp is None:
+        return None
+    ts = candle.timestamp
+    try:
+        if isinstance(ts, str) and ts.isdigit():
+            ts_sec = float(ts) / 1000 if len(ts) >= 13 else float(ts)
+            last_open = datetime.fromtimestamp(ts_sec, tz=timezone.utc)
+        else:
+            iso = str(ts).replace("Z", "+00:00")
+            if "+" in iso:
+                base, _, tz_part = iso.partition("+")
+                if "." in base:
+                    int_part, _, frac = base.partition(".")
+                    base = f"{int_part}.{frac[:3]}"
+                iso = f"{base}+{tz_part}"
+            last_open = datetime.fromisoformat(iso)
+        return max(0, int((datetime.now(timezone.utc) - last_open).total_seconds()))
+    except Exception:
+        return None
+
+
+def is_candle_complete(candles: list[Candle], interval_seconds: int = 300) -> bool:
+    """
+    Determine whether the LAST candle in the feed is already CLOSED.
+
+    Uses the candle's OPENING timestamp: if `interval_seconds` have elapsed
+    since the candle opened, it is considered closed (a new candle should have
+    started by now, but the feed may not have delivered it yet).
+
+    If the timestamp is unavailable, fall back to the old assumption that the
+    last candle is still forming (conservative: always exclude it).
+    """
+    if not candles:
+        return False
+    age = candle_age_seconds(candles[-1])
+    if age is None:
+        return False  # cannot verify → assume forming
+    return age >= interval_seconds
+
+
 def find_ma_crossover_index(
     prices: list[float],
     short_ma: list[float],
     window: int = 3,
     exclude_forming: bool = True,
+    last_candle_closed: bool = False,
 ) -> Optional[int]:
     """
     Find the index of the most recent candle where price crossed the short MA.
@@ -171,6 +219,11 @@ def find_ma_crossover_index(
     3) is scanned backwards so a crossover that happened 1-2 candles ago is not
     missed when the scheduler runs slightly late (this was the root cause of
     signals that appeared on the chart but were never turned into orders).
+
+    ``last_candle_closed``: set True when the strategy verified (via timestamp)
+    that the final candle in the feed is already CLOSED (aging >= interval).
+    In that case the final candle is NOT excluded, so a crossover on the
+    most-recently-closed candle is not lost to feed latency.
 
     Returns the index ``i`` of the candle where the price crossed (``prices[i]``
     is the "now" side of the pair), or None if no crossover is found.
@@ -185,9 +238,13 @@ def find_ma_crossover_index(
         pad = len(prices) - len(short_ma)
         short_ma = [short_ma[0]] * pad + list(short_ma)
 
+    # If the caller verified the last candle is already closed, treat it as a
+    # completed candle (the feed may not have delivered the forming one yet).
+    actual_exclude = exclude_forming and not last_candle_closed
+
     # Index of the last candle we are allowed to use as the "current" side of
     # the crossover pair.  If the last candle is still forming, exclude it.
-    end = len(prices) - (1 if exclude_forming else 0)
+    end = len(prices) - (1 if actual_exclude else 0)
     if end < 2:
         return None
 
@@ -213,6 +270,7 @@ def detect_ma_crossover(
     long_ma: list[float],
     window: int = 3,
     exclude_forming: bool = True,
+    last_candle_closed: bool = False,
 ) -> Optional[str]:
     """
     Detect the most recent price/short-MA crossover within a window of
@@ -224,6 +282,10 @@ def detect_ma_crossover(
     missed when the scheduler runs slightly late (this was the root cause of
     signals that appeared on the chart but were never turned into orders).
 
+    ``last_candle_closed``: set True when the strategy verified (via timestamp)
+    that the final candle in the feed is already CLOSED — it is then treated as
+    a completed candle so the most-recently-closed crossover is not lost.
+
     Returns 'bullish' (price crossed above the short MA), 'bearish' (price
     crossed below the short MA), or None.
     """
@@ -233,7 +295,8 @@ def detect_ma_crossover(
         short_ma = [short_ma[0]] * pad + list(short_ma)
 
     idx = find_ma_crossover_index(
-        prices, short_ma, window=window, exclude_forming=exclude_forming
+        prices, short_ma, window=window, exclude_forming=exclude_forming,
+        last_candle_closed=last_candle_closed,
     )
     if idx is None:
         return None
@@ -426,11 +489,18 @@ def evaluate_ma_strategy(
     ma_long_aligned = _align_ma(ma_long)
 
     # ── Detect crossover (on COMPLETED candles only) ────────────────
+    # Determina si la última vela del feed YA está cerrada (por timestamp).
+    # Si el feed tarda en publicar la vela siguiente, candles[-1] es en
+    # realidad la vela recién cerrada — no debe descartarse por "formándose".
+    last_candle_closed = is_candle_complete(candles)
+
     crossover_index = find_ma_crossover_index(
-        closes, ma_short, window=crossover_window
+        closes, ma_short, window=crossover_window,
+        last_candle_closed=last_candle_closed,
     )
     crossover = detect_ma_crossover(
-        closes, ma_short, ma_long, window=crossover_window
+        closes, ma_short, ma_long, window=crossover_window,
+        last_candle_closed=last_candle_closed,
     )
 
     # Use the price/MA of the candle where the crossover happened, NOT the
@@ -476,6 +546,7 @@ def evaluate_ma_strategy(
         "risk_reward_ratio": risk_reward_ratio,
         # Diagnóstico del feed (no invasivo) para depurar cruces perdidos
         "feed_diagnostics": _build_feed_diagnostics(candles, closes, ma_short_aligned),
+        "last_candle_closed": last_candle_closed,
     }
 
     if len(candles) < strategy.ma_long_period + 10:
