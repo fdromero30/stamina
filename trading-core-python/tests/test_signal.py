@@ -395,6 +395,8 @@ def test_evaluate_downtrend_sell_signal():
         f"Expected SELL or HOLD, got {signal.action}"
 
     if signal.action == SignalAction.SELL:
+        assert signal.stop_loss is not None, "SL should be set for SELL"
+        assert signal.take_profit is not None, "TP should be set for SELL"
         assert signal.stop_loss > signal.entry_price, "SL > entry for SELL"
         assert signal.take_profit < signal.entry_price, "TP < entry for SELL"
         print("  ✓ SELL signal: all assertions passed")
@@ -522,6 +524,7 @@ def test_expansion_filter_rejects_oversized_candle():
     print(f"  Normal signal: {signal_normal.action.value} ({signal_normal.reason})")
     assert signal_normal.action in (SignalAction.BUY, SignalAction.HOLD), \
         f"Expected BUY or HOLD on normal candle, got {signal_normal.action}"
+    assert signal_normal.context is not None, "Context should be set for normal candle"
     assert signal_normal.context.get("expansion_filtered") is False
 
     # 2) Oversized candle (20× body) → HOLD rejected by the filter.
@@ -546,6 +549,7 @@ def test_expansion_filter_rejects_oversized_candle():
     print(f"  Inflated signal: {signal_inflated.action.value} ({signal_inflated.reason})")
     assert signal_inflated.action == SignalAction.HOLD, \
         f"Expected HOLD (expansion filter) for inflated candle, got {signal_inflated.action}"
+    assert signal_inflated.context is not None, "Context should be set for inflated candle"
     assert signal_inflated.context.get("expansion_filtered") is True, \
         "expansion_filtered should be True in context"
     assert "filtro de expansión" in signal_inflated.reason
@@ -612,6 +616,7 @@ def test_sl_atr_based_buy():
         assert abs(risk_amount - expected_risk) < 1.0, \
             f"Risk {risk_amount} != expected {expected_risk}"
         # Context debe indicar la base ATR
+        assert signal.context is not None, "Context should be set"
         assert signal.context.get("sl_basis") == "ma200_atr"
         assert signal.context.get("atr_multiplier") == 1.5
         print("  ✓ ATR-based SL (BUY): all assertions passed")
@@ -674,6 +679,7 @@ def test_sl_atr_based_sell():
         expected_risk = 10000.0 * 0.005
         assert abs(risk_amount - expected_risk) < 1.0, \
             f"Risk {risk_amount} != expected {expected_risk}"
+        assert signal.context is not None, "Context should be set"
         assert signal.context.get("sl_basis") == "ma200_atr"
         print("  ✓ ATR-based SL (SELL): all assertions passed")
     else:
