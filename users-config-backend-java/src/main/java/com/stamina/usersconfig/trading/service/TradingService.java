@@ -130,7 +130,8 @@ public class TradingService {
                                 + request.instrumentId() + " at limit " + request.limitPrice()
                                 + " (order " + positionId + ")",
                         positionId,
-                        openResult
+                        openResult,
+                        demo
                 );
             }
 
@@ -174,11 +175,16 @@ public class TradingService {
             }
 
             String side = request.isBuy() ? "buy" : "sell";
+            // Best-effort: confirm the position is visible in the same
+            // environment (demo/real) the trade was executed in.
+            boolean confirmed = positionExists(userId, positionId, demo);
             return ExecuteTradeResponse.success(
                     side + " " + request.units() + " units of instrument " + request.instrumentId()
-                            + " at position " + positionId,
+                            + " at position " + positionId + " (demo=" + demo
+                            + ", confirmed=" + confirmed + ")",
                     positionId,
-                    openResult
+                    openResult,
+                    demo
             );
 
         } catch (Exception e) {
@@ -204,6 +210,31 @@ public class TradingService {
     }
 
     @SuppressWarnings("unchecked")
+    private boolean positionExists(UUID userId, int positionId, boolean demo) {
+        try {
+            Map<String, Object> portfolio = etoroClient.getPortfolio(userId, demo);
+            Object rawClient = portfolio.getOrDefault("clientPortfolio", portfolio);
+            if (rawClient instanceof Map<?, ?> clientMap) {
+                Object rawPositions = clientMap.get("positions");
+                if (rawPositions instanceof List<?> positions) {
+                    for (Object item : positions) {
+                        if (item instanceof Map<?, ?> posMap) {
+                            for (String key : List.of("positionID", "PositionID", "positionId", "id", "orderID", "OrderID")) {
+                                Object value = posMap.get(key);
+                                if (value instanceof Number num && num.intValue() == positionId) {
+                                    return true;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        } catch (Exception e) {
+            // best-effort
+        }
+        return false;
+    }
+
     private Integer extractPositionId(Map<String, Object> openResult) {
         // eToro typically returns position ID in the response
         // Try common keys: "PositionID", "positionId", "id"

@@ -681,6 +681,7 @@ class TradingBotEngine:
             "success": data.get("status") == "success",
             "position_id": data.get("positionId"),
             "message": data.get("message", ""),
+            "demo": data.get("demo", settings.use_demo_account),
             "raw_response": data.get("rawResponse"),
         }
 
