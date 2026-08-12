@@ -621,18 +621,34 @@ class TradingBotEngine:
                 result["trade_executed"] = trade_result.get("success", False)
                 result["trade_result"] = trade_result
 
-                if trade_result.get("success") and trade_result.get("position_id"):
+                position_id = trade_result.get("position_id")
+                # Only track REAL positions: eToro never returns 0/negative IDs
+                # for a valid order.  A 0/neg ID here means the upstream rejected
+                # the order but still returned HTTP 200 with a silent error body.
+                if (
+                    trade_result.get("success")
+                    and position_id is not None
+                    and int(position_id) > 0
+                ):
                     # Track the position in memory (limit orders are pending
                     # until filled — flagged so the news blackout can cancel them)
                     self._track_position(
                         user_id=uid,
-                        position_id=trade_result["position_id"],
+                        position_id=int(position_id),
                         entry_price=signal.entry_price,
                         stop_loss=signal.stop_loss,
                         take_profit=signal.take_profit,
                         is_buy=signal.action == SignalAction.BUY,
                         order_type=signal.order_type,
                         units=signal.units,
+                    )
+                else:
+                    logger.warning(
+                        "Trade NOT tracked for user %s: success=%s position_id=%s raw=%s",
+                        uid,
+                        trade_result.get("success"),
+                        position_id,
+                        trade_result.get("raw_response"),
                     )
             else:
                 result["trade_executed"] = False
@@ -677,9 +693,49 @@ class TradingBotEngine:
             response.raise_for_status()
             data = response.json()
 
+        logger.info(
+            "execute-smart response for instrument %d: status=%s positionId=%s message=%s",
+            instrument_id,
+            data.get("status"),
+            data.get("positionId"),
+            data.get("message", ""),
+        )
+
+        position_id = data.get("positionId")
+        # eToro never returns 0/negative IDs for a real position.  Guard so a
+        # silently-rejected order (HTTP 200 with an error body) is not mistaken
+        # for a successful fill.
+        if position_id is not None:
+            try:
+                pid = int(position_id)
+                if pid <= 0:
+                    logger.warning(
+                        "execute-smart returned invalid position id %s (order rejected by eToro)",
+                        position_id,
+                    )
+                    return {
+                        "success": False,
+                        "position_id": None,
+                        "message": data.get("message", "Order rejected by eToro (invalid position id)"),
+                        "demo": data.get("demo", settings.use_demo_account),
+                        "raw_response": data.get("rawResponse"),
+                    }
+            except (TypeError, ValueError):
+                logger.warning(
+                    "execute-smart returned non-numeric position id %s — treating as failure",
+                    position_id,
+                )
+                return {
+                    "success": False,
+                    "position_id": None,
+                    "message": data.get("message", "Order rejected (non-numeric position id)"),
+                    "demo": data.get("demo", settings.use_demo_account),
+                    "raw_response": data.get("rawResponse"),
+                }
+
         return {
             "success": data.get("status") == "success",
-            "position_id": data.get("positionId"),
+            "position_id": position_id,
             "message": data.get("message", ""),
             "demo": data.get("demo", settings.use_demo_account),
             "raw_response": data.get("rawResponse"),
@@ -767,6 +823,15 @@ class TradingBotEngine:
         units: float = 0.0,
     ) -> None:
         """Track an open position (or pending limit order) in memory."""
+        # Never track phantom positions: eToro never returns 0/negative IDs
+        # for a valid order.
+        if position_id is None or int(position_id) <= 0:
+            logger.warning(
+                "Refusing to track phantom position id=%s for user %s",
+                position_id, user_id,
+            )
+            return
+
         if user_id not in self._open_positions:
             self._open_positions[user_id] = []
 

@@ -8,6 +8,8 @@ import com.stamina.usersconfig.trading.dto.ExecuteOrderRequest;
 import com.stamina.usersconfig.trading.dto.ExecuteOrderResponse;
 import com.stamina.usersconfig.trading.dto.ExecuteTradeRequest;
 import com.stamina.usersconfig.trading.dto.ExecuteTradeResponse;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.web.server.ResponseStatusException;
@@ -19,6 +21,8 @@ import java.util.UUID;
 
 @Service
 public class TradingService {
+
+    private static final Logger log = LoggerFactory.getLogger(TradingService.class);
 
     private final StrategyConfigRepository strategyRepository;
     private final EtoroClient etoroClient;
@@ -110,6 +114,7 @@ public class TradingService {
                         request.stopLoss(),
                         request.takeProfit(),
                         demo);
+                log.info("eToro limit-order raw response: {}", openResult);
 
                 // Extract the OPEN ORDER id (limit orders are pending until filled)
                 positionId = extractPositionId(openResult);
@@ -118,10 +123,20 @@ public class TradingService {
                     Integer orderId = extractOrderId(openResult);
                     if (orderId == null) {
                         return ExecuteTradeResponse.error(
-                                "Limit order placed but could not extract order ID from eToro response"
+                                "Limit order placed but could not extract order ID from eToro response. raw=" + openResult
                         );
                     }
                     positionId = orderId;
+                }
+
+                // eToro NEVER returns 0/negative IDs for a real open order.  A
+                // 0/neg ID here means the upstream rejected the order (e.g. SL
+                // too close to the entry) but still returned HTTP 200 with a
+                // silent error body.
+                if (positionId <= 0) {
+                    return ExecuteTradeResponse.error(
+                            "Limit order REJECTED by eToro (invalid order id " + positionId + "). raw=" + openResult
+                    );
                 }
 
                 String side = request.isBuy() ? "buy" : "sell";
@@ -143,12 +158,22 @@ public class TradingService {
                     request.leverage(),
                     request.units(),
                     demo);
+            log.info("eToro market-order raw response: {}", openResult);
 
             // Extract position ID from the response
             positionId = extractPositionId(openResult);
             if (positionId == null) {
                 return ExecuteTradeResponse.error(
-                        "Position opened but could not extract position ID from eToro response"
+                        "Position opened but could not extract position ID from eToro response. raw=" + openResult
+                );
+            }
+
+            // eToro NEVER returns 0/negative IDs for a real position.  A 0/neg
+            // ID here means the upstream rejected the order (e.g. SL too close
+            // to the entry) but still returned HTTP 200 with a silent error body.
+            if (positionId <= 0) {
+                return ExecuteTradeResponse.error(
+                        "Market order REJECTED by eToro (invalid position id " + positionId + "). raw=" + openResult
                 );
             }
 
@@ -157,6 +182,7 @@ public class TradingService {
                 try {
                     etoroClient.setStopLoss(userId, positionId, request.stopLoss(), demo);
                 } catch (Exception e) {
+                    log.warn("Position {} opened but stop loss rejected: {}", positionId, e.getMessage());
                     return ExecuteTradeResponse.error(
                             "Position " + positionId + " opened but failed to set stop loss: " + e.getMessage()
                     );
@@ -168,6 +194,7 @@ public class TradingService {
                 try {
                     etoroClient.setTakeProfit(userId, positionId, request.takeProfit(), demo);
                 } catch (Exception e) {
+                    log.warn("Position {} opened but take profit rejected: {}", positionId, e.getMessage());
                     return ExecuteTradeResponse.error(
                             "Position " + positionId + " opened but failed to set take profit: " + e.getMessage()
                     );
@@ -175,9 +202,17 @@ public class TradingService {
             }
 
             String side = request.isBuy() ? "buy" : "sell";
-            // Best-effort: confirm the position is visible in the same
-            // environment (demo/real) the trade was executed in.
+            // The position must be CONFIRMED in the broker portfolio before we
+            // report success.  Without this, a rejected order returns 200 with
+            // a fabricated ID and the bot tracks a ghost position.
             boolean confirmed = positionExists(userId, positionId, demo);
+            if (!confirmed) {
+                return ExecuteTradeResponse.error(
+                        "Position " + positionId + " NOT CONFIRMED in eToro portfolio"
+                                + " (order may have been rejected). raw=" + openResult
+                );
+            }
+
             return ExecuteTradeResponse.success(
                     side + " " + request.units() + " units of instrument " + request.instrumentId()
                             + " at position " + positionId + " (demo=" + demo

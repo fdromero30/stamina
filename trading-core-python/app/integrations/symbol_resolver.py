@@ -8,6 +8,14 @@ symbol ourselves.  This resolver uses three layers, in order:
 2. Heuristic normalize — strip exchange suffixes (USDT, USDC, PERP) and slashes
 3. Cached catalogue    — download the full instrument list once (TTL 1h) and
                          match exact symbolFull/displayname, then substring
+
+IMPORTANT (2026-08): The static instrument-ID fast path was REMOVED — the
+hardcoded IDs (0, 1, 2, ..., 100000, 100001) are NOT the real eToro instrument
+IDs and caused HTTP 500 on every candles/rates request for EUR/USD, BTC, ETH,
+etc.  The eToro Public API uses instrument IDs that must come from the
+``/market-data/instruments`` catalogue (forex pairs use NEGATIVE IDs, e.g.
+EUR/USD is around -1xx, NOT +1).  Resolving through the cached catalogue is
+the only reliable path.
 """
 
 import logging
@@ -105,27 +113,13 @@ def _strip_exchange_suffix(symbol: str) -> str:
     return s
 
 
-# ── Static instrument ID map (fast path) ────────────────────────────────
-# Los IDs populares se resuelven sin descargar el catálogo completo (16k+).
-_STATIC_IDS: dict[str, int] = {
-    "EURUSD": 1, "GBPUSD": 2, "USDJPY": 3, "AUDUSD": 4, "USDCAD": 5,
-    "USDCHF": 6, "NZDUSD": 7, "EURGBP": 8, "EURJPY": 9,
-    "BTC": 100000, "ETH": 100001, "XRP": 100002, "SOL": 100003,
-    "ADA": 100004, "DOGE": 100005, "LTC": 100006,
-    "AAPL": 400017, "TSLA": 400018, "NVDA": 400019, "AMZN": 400020,
-    "MSFT": 400021, "META": 400022, "GOOGL": 400023, "NFLX": 400024,
-    "XAUUSD": 10000, "XAGUSD": 10001,
-    "SPX500": 30001, "NAS100": 30002, "US30": 30003, "GER40": 30004,
-}
-
-
 class SymbolResolver:
     """Shared resolver that maps user symbols to eToro instrument IDs.
 
     Usage::
 
         resolver = SymbolResolver(etoro_client)
-        instrument_id = await resolver.resolve(user_id, "BTCUSDT")   # -> 100000
+        instrument_id = await resolver.resolve(user_id, "BTCUSDT")   # -> real eToro ID
     """
 
     def __init__(
@@ -138,30 +132,33 @@ class SymbolResolver:
         # Cache format: { "symbolFull": { "instrumentId": int, "displayname": str } }
         self._catalogue: Optional[dict[str, dict[str, Any]]] = None
         self._catalogue_loaded_at: float = 0.0
+        # Cache of per-user instrument catalogues: { user_id: catalogue }
+        # Different eToro API keys can see different instrument universes.
+        self._per_user_catalogues: dict[str, dict[str, dict[str, Any]]] = {}
+        self._per_user_loaded_at: dict[str, float] = {}
 
     async def resolve(self, user_id: str, symbol: str) -> Optional[int]:
-        """Resolve a user-facing symbol to an eToro instrument ID (or None)."""
+        """Resolve a user-facing symbol to an eToro instrument ID (or None).
+
+        Always resolves through the cached eToro instrument catalogue — the
+        static-ID fast path was removed because hardcoded IDs (0, 1, 100000,
+        100001, ...) do not match the real eToro instrument IDs and caused
+        HTTP 500 on every candles/rates request.
+        """
         if not symbol or not symbol.strip():
             return None
 
-        # 0. FAST PATH: static instrument ID map (no network needed)
         norm = _normalize_symbol(symbol)
-        if norm in _STATIC_IDS:
-            return _STATIC_IDS[norm]
-        base = _strip_exchange_suffix(norm)
-        if base and base in _STATIC_IDS:
-            return _STATIC_IDS[base]
-        if aliased := SYMBOL_ALIASES.get(norm):
-            if aliased.upper() in _STATIC_IDS:
-                return _STATIC_IDS[aliased.upper()]
 
         # 1. Static alias map (via catalogue)
-        if aliased := SYMBOL_ALIASES.get(norm):
+        aliased = SYMBOL_ALIASES.get(norm)
+        if aliased is not None:
             inst = await self._find_in_catalogue(user_id, aliased)
             if inst is not None:
                 return inst
 
         # 2. Heuristic: strip exchange suffix (BTCUSDT -> BTC)
+        base = _strip_exchange_suffix(norm)
         if base and base != norm:
             inst = await self._find_in_catalogue(user_id, base)
             if inst is not None:
@@ -169,6 +166,11 @@ class SymbolResolver:
 
         # 3. Exact match on normalized symbol
         inst = await self._find_in_catalogue(user_id, norm)
+        if inst is not None:
+            return inst
+
+        # 4. Substring match on displayname (e.g. "USD/JPY" vs "JPY/USD")
+        inst = await self._find_substring_in_catalogue(user_id, norm)
         if inst is not None:
             return inst
 
@@ -195,11 +197,33 @@ class SymbolResolver:
 
         return None
 
+    async def _find_substring_in_catalogue(self, user_id: str, canonical: str) -> Optional[int]:
+        """Substring match on displayname for symbols like GOLD, SILVER, etc."""
+        catalogue = await self._get_catalogue(user_id)
+        if not catalogue:
+            return None
+
+        target = canonical.lower().replace("/", "")
+        for sym_full, meta in catalogue.items():
+            display_norm = meta["displayname"].lower().replace("/", "")
+            full_norm = sym_full.lower().replace("/", "")
+            if target in display_norm or target in full_norm:
+                return meta["instrumentId"]
+
+        return None
+
     async def _get_catalogue(self, user_id: str) -> dict[str, dict[str, Any]]:
-        """Fetch (and cache) the full eToro instrument catalogue."""
+        """
+        Fetch (and cache per-user) the full eToro instrument catalogue.
+
+        Each eToro API key sees its own instrument universe, so we cache the
+        catalogue PER USER to avoid cross-user ID mismatches.
+        """
         now = time.monotonic()
-        if self._catalogue is not None and (now - self._catalogue_loaded_at) < self._ttl:
-            return self._catalogue
+        cached = self._per_user_catalogues.get(user_id)
+        loaded_at = self._per_user_loaded_at.get(user_id, 0.0)
+        if cached is not None and (now - loaded_at) < self._ttl:
+            return cached
 
         try:
             result = await self._client.search_instruments(
@@ -241,16 +265,26 @@ class SymbolResolver:
                     }
 
             if not catalogue:
-                logger.error("eToro instrument catalogue is empty")
+                logger.error("eToro instrument catalogue is empty for user %s", user_id)
                 return {}
 
+            self._per_user_catalogues[user_id] = catalogue
+            self._per_user_loaded_at[user_id] = now
+            # Keep the shared global cache in sync for the chart endpoint
             self._catalogue = catalogue
             self._catalogue_loaded_at = now
-            logger.info("Loaded eToro instrument catalogue: %d instruments", len(catalogue))
+            logger.info(
+                "Loaded eToro instrument catalogue for user %s: %d instruments",
+                user_id, len(catalogue),
+            )
             return catalogue
         except Exception as e:
-            logger.error("Failed to load eToro instrument catalogue: %s", e)
-            # If we have a stale cache, keep using it
+            logger.error("Failed to load eToro instrument catalogue for user %s: %s", user_id, e)
+            # If we have a stale cache for this user, keep using it
+            stale = self._per_user_catalogues.get(user_id)
+            if stale is not None:
+                return stale
+            # Fall back to the shared global cache
             if self._catalogue is not None:
                 return self._catalogue
             return {}
@@ -259,3 +293,5 @@ class SymbolResolver:
         """Force a fresh catalogue download on the next resolve()."""
         self._catalogue = None
         self._catalogue_loaded_at = 0.0
+        self._per_user_catalogues.clear()
+        self._per_user_loaded_at.clear()
