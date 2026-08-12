@@ -240,102 +240,23 @@ public class EtoroClient {
     }
 
     // ──────────────────────────────────────────────
-    //  Trading Execution – Demo
+    //  Trading Execution — one method per operation.
+    //  The `demo` flag (from request/ETORO_DEMO) selects the
+    //  upstream path: /demo/ for Virtual, non-demo for Real.
     // ──────────────────────────────────────────────
 
-    @SuppressWarnings("unchecked")
-    public Map<String, Object> placeDemoMarketOrderByAmount(UUID userId,
-                                                             int instrumentId,
-                                                             boolean isBuy,
-                                                             int leverage,
-                                                             double amount) {
-        Map<String, Object> body = Map.of(
-                "InstrumentID", instrumentId,
-                "IsBuy", isBuy,
-                "Leverage", leverage,
-                "Amount", amount
-        );
-        return (Map<String, Object>) applyHeaders(
-                restClient.post()
-                        .uri("/trading/execution/demo/market-open-orders/by-amount")
-                        .body(body),
-                userId)
-                .retrieve()
-                .body(Map.class);
+    /** Upstream path segment: "/demo" for the Virtual portfolio, "" for Real. */
+    private static String demoSegment(boolean demo) {
+        return demo ? "/demo" : "";
     }
-
-    @SuppressWarnings("unchecked")
-    public Map<String, Object> placeDemoMarketOrderByUnits(UUID userId,
-                                                            int instrumentId,
-                                                            boolean isBuy,
-                                                            int leverage,
-                                                            double units) {
-        Map<String, Object> body = Map.of(
-                "InstrumentID", instrumentId,
-                "IsBuy", isBuy,
-                "Leverage", leverage,
-                "AmountInUnits", units
-        );
-        return (Map<String, Object>) applyHeaders(
-                restClient.post()
-                        .uri("/trading/execution/demo/market-open-orders/by-units")
-                        .body(body),
-                userId)
-                .retrieve()
-                .body(Map.class);
-    }
-
-    @SuppressWarnings("unchecked")
-    public Map<String, Object> placeDemoLimitOrderByUnits(UUID userId,
-                                                           int instrumentId,
-                                                           boolean isBuy,
-                                                           int leverage,
-                                                           double units,
-                                                           java.math.BigDecimal limitRate,
-                                                           java.math.BigDecimal stopLossRate,
-                                                           java.math.BigDecimal takeProfitRate) {
-        Map<String, Object> body = new java.util.HashMap<>();
-        body.put("InstrumentID", instrumentId);
-        body.put("IsBuy", isBuy);
-        body.put("Leverage", leverage);
-        body.put("AmountInUnits", units);
-        body.put("LimitRate", limitRate);
-        if (stopLossRate != null) body.put("StopLossRate", stopLossRate);
-        if (takeProfitRate != null) body.put("TakeProfitRate", takeProfitRate);
-        return (Map<String, Object>) applyHeaders(
-                restClient.post()
-                        .uri("/trading/execution/demo/limit-open-orders/by-units")
-                        .body(body),
-                userId)
-                .retrieve()
-                .body(Map.class);
-    }
-
-    @SuppressWarnings("unchecked")
-    public Map<String, Object> closeDemoPosition(UUID userId, int positionId, Double unitsToDeduct) {
-        Map<String, Object> body = Map.of(
-                "InstrumentId", positionId,
-                "UnitsToDeduct", unitsToDeduct
-        );
-        return (Map<String, Object>) applyHeaders(
-                restClient.post()
-                        .uri("/trading/execution/demo/market-close-orders/positions/{positionId}", positionId)
-                        .body(body),
-                userId)
-                .retrieve()
-                .body(Map.class);
-    }
-
-    // ──────────────────────────────────────────────
-    //  Trading Execution – Real
-    // ──────────────────────────────────────────────
 
     @SuppressWarnings("unchecked")
     public Map<String, Object> placeMarketOrderByAmount(UUID userId,
                                                          int instrumentId,
                                                          boolean isBuy,
                                                          int leverage,
-                                                         double amount) {
+                                                         double amount,
+                                                         boolean demo) {
         Map<String, Object> body = Map.of(
                 "InstrumentID", instrumentId,
                 "IsBuy", isBuy,
@@ -344,7 +265,7 @@ public class EtoroClient {
         );
         return (Map<String, Object>) applyHeaders(
                 restClient.post()
-                        .uri("/trading/execution/market-open-orders/by-amount")
+                        .uri("/trading/execution" + demoSegment(demo) + "/market-open-orders/by-amount")
                         .body(body),
                 userId)
                 .retrieve()
@@ -356,7 +277,8 @@ public class EtoroClient {
                                                         int instrumentId,
                                                         boolean isBuy,
                                                         int leverage,
-                                                        double units) {
+                                                        double units,
+                                                        boolean demo) {
         Map<String, Object> body = Map.of(
                 "InstrumentID", instrumentId,
                 "IsBuy", isBuy,
@@ -365,33 +287,39 @@ public class EtoroClient {
         );
         return (Map<String, Object>) applyHeaders(
                 restClient.post()
-                        .uri("/trading/execution/market-open-orders/by-units")
+                        .uri("/trading/execution" + demoSegment(demo) + "/market-open-orders/by-units")
                         .body(body),
                 userId)
                 .retrieve()
                 .body(Map.class);
     }
 
+    /**
+     * Market-if-touched (limit) order. Per the eToro API docs the endpoint is
+     * /trading/execution[/demo]/limit-orders and the trigger price field is
+     * {@code Rate} (NOT {@code LimitRate}).
+     */
     @SuppressWarnings("unchecked")
     public Map<String, Object> placeLimitOrderByUnits(UUID userId,
                                                        int instrumentId,
                                                        boolean isBuy,
                                                        int leverage,
                                                        double units,
-                                                       java.math.BigDecimal limitRate,
+                                                       java.math.BigDecimal rate,
                                                        java.math.BigDecimal stopLossRate,
-                                                       java.math.BigDecimal takeProfitRate) {
+                                                       java.math.BigDecimal takeProfitRate,
+                                                       boolean demo) {
         Map<String, Object> body = new java.util.HashMap<>();
         body.put("InstrumentID", instrumentId);
         body.put("IsBuy", isBuy);
         body.put("Leverage", leverage);
         body.put("AmountInUnits", units);
-        body.put("LimitRate", limitRate);
+        body.put("Rate", rate);
         if (stopLossRate != null) body.put("StopLossRate", stopLossRate);
         if (takeProfitRate != null) body.put("TakeProfitRate", takeProfitRate);
         return (Map<String, Object>) applyHeaders(
                 restClient.post()
-                        .uri("/trading/execution/limit-open-orders/by-units")
+                        .uri("/trading/execution" + demoSegment(demo) + "/limit-orders")
                         .body(body),
                 userId)
                 .retrieve()
@@ -399,14 +327,14 @@ public class EtoroClient {
     }
 
     @SuppressWarnings("unchecked")
-    public Map<String, Object> closePosition(UUID userId, int positionId, Double unitsToDeduct) {
+    public Map<String, Object> closePosition(UUID userId, int positionId, Double unitsToDeduct, boolean demo) {
         Map<String, Object> body = Map.of(
                 "InstrumentId", positionId,
                 "UnitsToDeduct", unitsToDeduct
         );
         return (Map<String, Object>) applyHeaders(
                 restClient.post()
-                        .uri("/trading/execution/market-close-orders/positions/{positionId}", positionId)
+                        .uri("/trading/execution" + demoSegment(demo) + "/market-close-orders/positions/{positionId}", positionId)
                         .body(body),
                 userId)
                 .retrieve()
@@ -415,9 +343,7 @@ public class EtoroClient {
 
     @SuppressWarnings("unchecked")
     public Map<String, Object> cancelOpenOrder(UUID userId, int orderId, boolean demo) {
-        String path = demo
-                ? "/trading/execution/demo/market-open-orders/{orderId}"
-                : "/trading/execution/market-open-orders/{orderId}";
+        String path = "/trading/execution" + demoSegment(demo) + "/market-open-orders/{orderId}";
         return (Map<String, Object>) applyHeaders(
                 restClient.delete().uri(path, orderId),
                 userId)
@@ -430,36 +356,21 @@ public class EtoroClient {
     // ──────────────────────────────────────────────
 
     @SuppressWarnings("unchecked")
-    public Map<String, Object> getPortfolio(UUID userId) {
+    public Map<String, Object> getPortfolio(UUID userId, boolean demo) {
         return (Map<String, Object>) applyHeaders(
-                restClient.get().uri("/trading/info/portfolio"),
+                restClient.get().uri("/trading/info" + demoSegment(demo) + "/portfolio"),
                 userId)
                 .retrieve()
                 .body(Map.class);
     }
 
     @SuppressWarnings("unchecked")
-    public Map<String, Object> getDemoPortfolio(UUID userId) {
+    public Map<String, Object> getPnl(UUID userId, boolean demo) {
+        String path = demo
+                ? "/trading/info/demo/pnl"
+                : "/trading/info/real/pnl";
         return (Map<String, Object>) applyHeaders(
-                restClient.get().uri("/trading/info/demo/portfolio"),
-                userId)
-                .retrieve()
-                .body(Map.class);
-    }
-
-    @SuppressWarnings("unchecked")
-    public Map<String, Object> getRealPnl(UUID userId) {
-        return (Map<String, Object>) applyHeaders(
-                restClient.get().uri("/trading/info/real/pnl"),
-                userId)
-                .retrieve()
-                .body(Map.class);
-    }
-
-    @SuppressWarnings("unchecked")
-    public Map<String, Object> getDemoPnl(UUID userId) {
-        return (Map<String, Object>) applyHeaders(
-                restClient.get().uri("/trading/info/demo/pnl"),
+                restClient.get().uri(path),
                 userId)
                 .retrieve()
                 .body(Map.class);
@@ -499,14 +410,14 @@ public class EtoroClient {
     // ──────────────────────────────────────────────
 
     @SuppressWarnings("unchecked")
-    public Map<String, Object> setStopLoss(UUID userId, int positionId, BigDecimal stopLossRate) {
+    public Map<String, Object> setStopLoss(UUID userId, int positionId, BigDecimal stopLossRate, boolean demo) {
         Map<String, Object> body = Map.of(
                 "PositionID", positionId,
                 "StopLossRate", stopLossRate
         );
         return (Map<String, Object>) applyHeaders(
                 restClient.post()
-                        .uri("/trading/execution/stop-loss-orders")
+                        .uri("/trading/execution" + demoSegment(demo) + "/stop-loss-orders")
                         .body(body),
                 userId)
                 .retrieve()
@@ -514,14 +425,14 @@ public class EtoroClient {
     }
 
     @SuppressWarnings("unchecked")
-    public Map<String, Object> setTakeProfit(UUID userId, int positionId, BigDecimal takeProfitRate) {
+    public Map<String, Object> setTakeProfit(UUID userId, int positionId, BigDecimal takeProfitRate, boolean demo) {
         Map<String, Object> body = Map.of(
                 "PositionID", positionId,
                 "TakeProfitRate", takeProfitRate
         );
         return (Map<String, Object>) applyHeaders(
                 restClient.post()
-                        .uri("/trading/execution/take-profit-orders")
+                        .uri("/trading/execution" + demoSegment(demo) + "/take-profit-orders")
                         .body(body),
                 userId)
                 .retrieve()
@@ -529,14 +440,14 @@ public class EtoroClient {
     }
 
     @SuppressWarnings("unchecked")
-    public Map<String, Object> updateStopLoss(UUID userId, int positionId, BigDecimal newStopLossRate) {
+    public Map<String, Object> updateStopLoss(UUID userId, int positionId, BigDecimal newStopLossRate, boolean demo) {
         Map<String, Object> body = Map.of(
                 "PositionID", positionId,
                 "StopLossRate", newStopLossRate
         );
         return (Map<String, Object>) applyHeaders(
                 restClient.put()
-                        .uri("/trading/execution/stop-loss-orders/{positionId}", positionId)
+                        .uri("/trading/execution" + demoSegment(demo) + "/stop-loss-orders/{positionId}", positionId)
                         .body(body),
                 userId)
                 .retrieve()

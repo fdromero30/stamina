@@ -1,6 +1,7 @@
 package com.stamina.usersconfig.trading.controller;
 
 import com.stamina.usersconfig.trading.client.EtoroClient;
+import com.stamina.usersconfig.trading.config.EtoroConfig;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -18,30 +19,27 @@ import java.util.UUID;
 public class EtoroPortfolioController {
 
     private final EtoroClient etoroClient;
+    private final EtoroConfig etoroConfig;
 
-    public EtoroPortfolioController(EtoroClient etoroClient) {
+    public EtoroPortfolioController(EtoroClient etoroClient, EtoroConfig etoroConfig) {
         this.etoroClient = etoroClient;
+        this.etoroConfig = etoroConfig;
+    }
+
+    private boolean resolveDemo(Boolean demo) {
+        return demo != null ? demo : etoroConfig.isDemoMode();
     }
 
     @GetMapping
     @ResponseStatus(HttpStatus.OK)
-    public Map<String, Object> portfolio(@RequestParam("userId") UUID userId) {
+    public Map<String, Object> portfolio(
+            @RequestParam("userId") UUID userId,
+            @RequestParam(value = "demo", required = false) Boolean demo) {
         try {
-            return etoroClient.getPortfolio(userId);
+            return etoroClient.getPortfolio(userId, resolveDemo(demo));
         } catch (Exception e) {
             throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR,
                     "eToro portfolio failed: " + e.getMessage());
-        }
-    }
-
-    @GetMapping("/demo")
-    @ResponseStatus(HttpStatus.OK)
-    public Map<String, Object> demoPortfolio(@RequestParam("userId") UUID userId) {
-        try {
-            return etoroClient.getDemoPortfolio(userId);
-        } catch (Exception e) {
-            throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR,
-                    "eToro demo portfolio failed: " + e.getMessage());
         }
     }
 
@@ -54,11 +52,10 @@ public class EtoroPortfolioController {
     @ResponseStatus(HttpStatus.OK)
     public Map<String, Object> openPositions(
             @RequestParam("userId") UUID userId,
-            @RequestParam(value = "demo", defaultValue = "true") boolean demo) {
+            @RequestParam(value = "demo", required = false) Boolean demo) {
         try {
-            Map<String, Object> portfolio = demo
-                    ? etoroClient.getDemoPortfolio(userId)
-                    : etoroClient.getPortfolio(userId);
+            boolean useDemo = resolveDemo(demo);
+            Map<String, Object> portfolio = etoroClient.getPortfolio(userId, useDemo);
 
             @SuppressWarnings("unchecked")
             Map<String, Object> clientPortfolio =
@@ -82,7 +79,7 @@ public class EtoroPortfolioController {
             return Map.of(
                     "positions", positions,
                     "count", positions.size(),
-                    "demo", demo
+                    "demo", useDemo
             );
         } catch (Exception e) {
             throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR,
@@ -92,23 +89,14 @@ public class EtoroPortfolioController {
 
     @GetMapping("/pnl")
     @ResponseStatus(HttpStatus.OK)
-    public Map<String, Object> realPnl(@RequestParam("userId") UUID userId) {
+    public Map<String, Object> pnl(
+            @RequestParam("userId") UUID userId,
+            @RequestParam(value = "demo", required = false) Boolean demo) {
         try {
-            return etoroClient.getRealPnl(userId);
+            return etoroClient.getPnl(userId, resolveDemo(demo));
         } catch (Exception e) {
             throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR,
-                    "eToro real P&L failed: " + e.getMessage());
-        }
-    }
-
-    @GetMapping("/pnl/demo")
-    @ResponseStatus(HttpStatus.OK)
-    public Map<String, Object> demoPnl(@RequestParam("userId") UUID userId) {
-        try {
-            return etoroClient.getDemoPnl(userId);
-        } catch (Exception e) {
-            throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR,
-                    "eToro demo P&L failed: " + e.getMessage());
+                    "eToro P&L failed: " + e.getMessage());
         }
     }
 

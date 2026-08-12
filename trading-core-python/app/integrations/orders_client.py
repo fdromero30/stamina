@@ -4,6 +4,8 @@ from typing import Any, Optional
 
 import httpx
 
+from app.settings import settings
+
 
 @dataclass(frozen=True)
 class OrderRequest:
@@ -48,10 +50,19 @@ class EtoroHttpClient:
 
     Each method requires a ``userId`` so the backend can resolve the user's
     encrypted eToro credentials from the database.
+
+    Demo vs real is NOT a separate URL: the caller passes ``demo=None`` (use
+    the configured ``settings.use_demo_account``), ``demo=True`` (virtual
+    portfolio), or ``demo=False`` (real portfolio).  The backend translates
+    that into the appropriate upstream eToro path.
     """
 
     def __init__(self, base_url: str) -> None:
         self._base_url = base_url.rstrip("/")
+
+    @staticmethod
+    def _raw_demo(demo: Optional[bool]) -> bool:
+        return settings.use_demo_account if demo is None else demo
 
     # ── Market Data ──────────────────────────────────────────────────
 
@@ -97,67 +108,9 @@ class EtoroHttpClient:
             resp.raise_for_status()
             return resp.json()
 
-    # ── Trading – Demo ───────────────────────────────────────────────
-
-    async def demo_open_by_amount(
-        self,
-        user_id: str,
-        instrument_id: int,
-        is_buy: bool,
-        amount: float,
-        leverage: int = 1,
-    ) -> dict[str, Any]:
-        async with httpx.AsyncClient(timeout=15) as client:
-            resp = await client.post(
-                f"{self._base_url}/etoro/trading/demo/open-by-amount",
-                params={
-                    "userId": user_id,
-                    "instrumentId": instrument_id,
-                    "isBuy": is_buy,
-                    "leverage": leverage,
-                    "amount": amount,
-                },
-            )
-            resp.raise_for_status()
-            return resp.json()
-
-    async def demo_open_by_units(
-        self,
-        user_id: str,
-        instrument_id: int,
-        is_buy: bool,
-        units: float,
-        leverage: int = 1,
-    ) -> dict[str, Any]:
-        async with httpx.AsyncClient(timeout=15) as client:
-            resp = await client.post(
-                f"{self._base_url}/etoro/trading/demo/open-by-units",
-                params={
-                    "userId": user_id,
-                    "instrumentId": instrument_id,
-                    "isBuy": is_buy,
-                    "leverage": leverage,
-                    "units": units,
-                },
-            )
-            resp.raise_for_status()
-            return resp.json()
-
-    async def demo_close_position(
-        self, user_id: str, position_id: int, units_to_deduct: Optional[float] = None
-    ) -> dict[str, Any]:
-        params: dict[str, Any] = {"userId": user_id}
-        if units_to_deduct is not None:
-            params["unitsToDeduct"] = units_to_deduct
-        async with httpx.AsyncClient(timeout=15) as client:
-            resp = await client.post(
-                f"{self._base_url}/etoro/trading/demo/close-position/{position_id}",
-                params=params,
-            )
-            resp.raise_for_status()
-            return resp.json()
-
-    # ── Trading – Real ───────────────────────────────────────────────
+    # ── Trading ─────────────────────────────────────────────────────
+    # The `demo` query param is optional: when omitted, the backend uses
+    # its ETORO_DEMO config.
 
     async def open_by_amount(
         self,
@@ -166,17 +119,20 @@ class EtoroHttpClient:
         is_buy: bool,
         amount: float,
         leverage: int = 1,
+        demo: Optional[bool] = None,
     ) -> dict[str, Any]:
+        params: dict[str, Any] = {
+            "userId": user_id,
+            "instrumentId": instrument_id,
+            "isBuy": is_buy,
+            "leverage": leverage,
+            "amount": amount,
+            "demo": str(self._raw_demo(demo)).lower(),
+        }
         async with httpx.AsyncClient(timeout=15) as client:
             resp = await client.post(
                 f"{self._base_url}/etoro/trading/open-by-amount",
-                params={
-                    "userId": user_id,
-                    "instrumentId": instrument_id,
-                    "isBuy": is_buy,
-                    "leverage": leverage,
-                    "amount": amount,
-                },
+                params=params,
             )
             resp.raise_for_status()
             return resp.json()
@@ -188,25 +144,35 @@ class EtoroHttpClient:
         is_buy: bool,
         units: float,
         leverage: int = 1,
+        demo: Optional[bool] = None,
     ) -> dict[str, Any]:
+        params: dict[str, Any] = {
+            "userId": user_id,
+            "instrumentId": instrument_id,
+            "isBuy": is_buy,
+            "leverage": leverage,
+            "units": units,
+            "demo": str(self._raw_demo(demo)).lower(),
+        }
         async with httpx.AsyncClient(timeout=15) as client:
             resp = await client.post(
                 f"{self._base_url}/etoro/trading/open-by-units",
-                params={
-                    "userId": user_id,
-                    "instrumentId": instrument_id,
-                    "isBuy": is_buy,
-                    "leverage": leverage,
-                    "units": units,
-                },
+                params=params,
             )
             resp.raise_for_status()
             return resp.json()
 
     async def close_position(
-        self, user_id: str, position_id: int, units_to_deduct: Optional[float] = None
+        self,
+        user_id: str,
+        position_id: int,
+        units_to_deduct: Optional[float] = None,
+        demo: Optional[bool] = None,
     ) -> dict[str, Any]:
-        params: dict[str, Any] = {"userId": user_id}
+        params: dict[str, Any] = {
+            "userId": user_id,
+            "demo": str(self._raw_demo(demo)).lower(),
+        }
         if units_to_deduct is not None:
             params["unitsToDeduct"] = units_to_deduct
         async with httpx.AsyncClient(timeout=15) as client:
@@ -218,68 +184,59 @@ class EtoroHttpClient:
             return resp.json()
 
     async def cancel_order(
-        self, user_id: str, order_id: int, demo: bool = False
+        self, user_id: str, order_id: int, demo: Optional[bool] = None
     ) -> dict[str, Any]:
+        """Cancel an open order. ``demo`` defaults to ``settings.use_demo_account``."""
+        params: dict[str, Any] = {
+            "userId": user_id,
+            "demo": str(self._raw_demo(demo)).lower(),
+        }
         async with httpx.AsyncClient(timeout=15) as client:
             resp = await client.delete(
                 f"{self._base_url}/etoro/trading/cancel-order/{order_id}",
-                params={"userId": user_id, "demo": str(demo).lower()},
+                params=params,
             )
             resp.raise_for_status()
             return resp.json()
 
     # ── Portfolio / P&L ──────────────────────────────────────────────
 
-    async def get_portfolio(self, user_id: str) -> dict[str, Any]:
+    async def get_portfolio(self, user_id: str, demo: Optional[bool] = None) -> dict[str, Any]:
+        params: dict[str, Any] = {"userId": user_id, "demo": str(self._raw_demo(demo)).lower()}
         async with httpx.AsyncClient(timeout=15) as client:
             resp = await client.get(
                 f"{self._base_url}/etoro/portfolio",
-                params={"userId": user_id},
-            )
-            resp.raise_for_status()
-            return resp.json()
-
-    async def get_demo_portfolio(self, user_id: str) -> dict[str, Any]:
-        async with httpx.AsyncClient(timeout=15) as client:
-            resp = await client.get(
-                f"{self._base_url}/etoro/portfolio/demo",
-                params={"userId": user_id},
+                params=params,
             )
             resp.raise_for_status()
             return resp.json()
 
     async def get_open_positions(
-        self, user_id: str, demo: bool = True
+        self, user_id: str, demo: Optional[bool] = None
     ) -> list[dict[str, Any]]:
         """
         Fetch only OPEN positions (isSettled=false) from the eToro proxy.
 
         The Java backend filters settled/closed positions so the bot can
         reconcile its local state with what actually exists in eToro.
+        ``demo`` defaults to ``settings.use_demo_account``.
         """
+        params: dict[str, Any] = {"userId": user_id, "demo": str(self._raw_demo(demo)).lower()}
         async with httpx.AsyncClient(timeout=15) as client:
             resp = await client.get(
                 f"{self._base_url}/etoro/portfolio/positions",
-                params={"userId": user_id, "demo": str(demo).lower()},
+                params=params,
             )
             resp.raise_for_status()
             data = resp.json()
         return data.get("positions") or []
 
-    async def get_real_pnl(self, user_id: str) -> dict[str, Any]:
+    async def get_pnl(self, user_id: str, demo: Optional[bool] = None) -> dict[str, Any]:
+        params: dict[str, Any] = {"userId": user_id, "demo": str(self._raw_demo(demo)).lower()}
         async with httpx.AsyncClient(timeout=15) as client:
             resp = await client.get(
                 f"{self._base_url}/etoro/portfolio/pnl",
-                params={"userId": user_id},
-            )
-            resp.raise_for_status()
-            return resp.json()
-
-    async def get_demo_pnl(self, user_id: str) -> dict[str, Any]:
-        async with httpx.AsyncClient(timeout=15) as client:
-            resp = await client.get(
-                f"{self._base_url}/etoro/portfolio/pnl/demo",
-                params={"userId": user_id},
+                params=params,
             )
             resp.raise_for_status()
             return resp.json()
@@ -303,26 +260,36 @@ class EtoroHttpClient:
     # ── Stop Loss / Take Profit updates ────────────────────────────
 
     async def update_stop_loss(
-        self, user_id: str, position_id: int, stop_loss: float
+        self, user_id: str, position_id: int, stop_loss: float, demo: Optional[bool] = None
     ) -> dict[str, Any]:
-        """Update the stop loss on an existing position."""
+        """Update the stop loss on an existing position.
+
+        ``demo`` defaults to the configured ``settings.use_demo_account``
+        when not provided.
+        """
+        params: dict[str, Any] = {"userId": user_id, "demo": str(self._raw_demo(demo)).lower()}
         async with httpx.AsyncClient(timeout=15) as client:
             resp = await client.put(
                 f"{self._base_url}/etoro/trading/stop-loss/{position_id}",
-                params={"userId": user_id},
+                params=params,
                 json={"stopLoss": stop_loss},
             )
             resp.raise_for_status()
             return resp.json()
 
     async def update_take_profit(
-        self, user_id: str, position_id: int, take_profit: float
+        self, user_id: str, position_id: int, take_profit: float, demo: Optional[bool] = None
     ) -> dict[str, Any]:
-        """Update the take profit on an existing position (e.g. far TP for trailing)."""
+        """Update the take profit on an existing position (e.g. far TP for trailing).
+
+        ``demo`` defaults to the configured ``settings.use_demo_account``
+        when not provided.
+        """
+        params: dict[str, Any] = {"userId": user_id, "demo": str(self._raw_demo(demo)).lower()}
         async with httpx.AsyncClient(timeout=15) as client:
             resp = await client.put(
                 f"{self._base_url}/etoro/trading/take-profit/{position_id}",
-                params={"userId": user_id},
+                params=params,
                 json={"takeProfit": take_profit},
             )
             resp.raise_for_status()

@@ -1,6 +1,7 @@
 package com.stamina.usersconfig.trading.controller;
 
 import com.stamina.usersconfig.trading.client.EtoroClient;
+import com.stamina.usersconfig.trading.config.EtoroConfig;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -16,65 +17,31 @@ import org.springframework.web.server.ResponseStatusException;
 import java.util.Map;
 import java.util.UUID;
 
+/**
+ * eToro trading proxy.
+ *
+ * Demo vs real is NOT a separate URL — both environments share the same
+ * endpoints and the caller selects the mode with the {@code demo} query
+ * parameter (defaults to {@code etoro.demo-mode} / {@code ETORO_DEMO}).
+ * Demo execution simply routes to eToro's upstream /demo/ paths internally.
+ */
 @RestController
 @RequestMapping("/etoro/trading")
 public class EtoroTradingController {
 
     private final EtoroClient etoroClient;
+    private final EtoroConfig etoroConfig;
 
-    public EtoroTradingController(EtoroClient etoroClient) {
+    public EtoroTradingController(EtoroClient etoroClient, EtoroConfig etoroConfig) {
         this.etoroClient = etoroClient;
+        this.etoroConfig = etoroConfig;
     }
 
-    // ── Demo ────────────────────────────────────
-
-    @PostMapping("/demo/open-by-amount")
-    @ResponseStatus(HttpStatus.OK)
-    public Map<String, Object> demoOpenByAmount(
-            @RequestParam("userId") UUID userId,
-            @RequestParam("instrumentId") int instrumentId,
-            @RequestParam("isBuy") boolean isBuy,
-            @RequestParam(value = "leverage", defaultValue = "1") int leverage,
-            @RequestParam("amount") double amount) {
-        try {
-            return etoroClient.placeDemoMarketOrderByAmount(userId, instrumentId, isBuy, leverage, amount);
-        } catch (Exception e) {
-            throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR,
-                    "eToro demo open by amount failed: " + e.getMessage());
-        }
+    private boolean resolveDemo(Boolean demo) {
+        return demo != null ? demo : etoroConfig.isDemoMode();
     }
 
-    @PostMapping("/demo/open-by-units")
-    @ResponseStatus(HttpStatus.OK)
-    public Map<String, Object> demoOpenByUnits(
-            @RequestParam("userId") UUID userId,
-            @RequestParam("instrumentId") int instrumentId,
-            @RequestParam("isBuy") boolean isBuy,
-            @RequestParam(value = "leverage", defaultValue = "1") int leverage,
-            @RequestParam("units") double units) {
-        try {
-            return etoroClient.placeDemoMarketOrderByUnits(userId, instrumentId, isBuy, leverage, units);
-        } catch (Exception e) {
-            throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR,
-                    "eToro demo open by units failed: " + e.getMessage());
-        }
-    }
-
-    @PostMapping("/demo/close-position/{positionId}")
-    @ResponseStatus(HttpStatus.OK)
-    public Map<String, Object> demoClosePosition(
-            @RequestParam("userId") UUID userId,
-            @PathVariable("positionId") int positionId,
-            @RequestParam(value = "unitsToDeduct", required = false) Double unitsToDeduct) {
-        try {
-            return etoroClient.closeDemoPosition(userId, positionId, unitsToDeduct);
-        } catch (Exception e) {
-            throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR,
-                    "eToro demo close position failed: " + e.getMessage());
-        }
-    }
-
-    // ── Real ────────────────────────────────────
+    // ── Market orders ──────────────────────────────
 
     @PostMapping("/open-by-amount")
     @ResponseStatus(HttpStatus.OK)
@@ -83,9 +50,11 @@ public class EtoroTradingController {
             @RequestParam("instrumentId") int instrumentId,
             @RequestParam("isBuy") boolean isBuy,
             @RequestParam(value = "leverage", defaultValue = "1") int leverage,
-            @RequestParam("amount") double amount) {
+            @RequestParam("amount") double amount,
+            @RequestParam(value = "demo", required = false) Boolean demo) {
         try {
-            return etoroClient.placeMarketOrderByAmount(userId, instrumentId, isBuy, leverage, amount);
+            return etoroClient.placeMarketOrderByAmount(
+                    userId, instrumentId, isBuy, leverage, amount, resolveDemo(demo));
         } catch (Exception e) {
             throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR,
                     "eToro open by amount failed: " + e.getMessage());
@@ -99,9 +68,11 @@ public class EtoroTradingController {
             @RequestParam("instrumentId") int instrumentId,
             @RequestParam("isBuy") boolean isBuy,
             @RequestParam(value = "leverage", defaultValue = "1") int leverage,
-            @RequestParam("units") double units) {
+            @RequestParam("units") double units,
+            @RequestParam(value = "demo", required = false) Boolean demo) {
         try {
-            return etoroClient.placeMarketOrderByUnits(userId, instrumentId, isBuy, leverage, units);
+            return etoroClient.placeMarketOrderByUnits(
+                    userId, instrumentId, isBuy, leverage, units, resolveDemo(demo));
         } catch (Exception e) {
             throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR,
                     "eToro open by units failed: " + e.getMessage());
@@ -113,9 +84,11 @@ public class EtoroTradingController {
     public Map<String, Object> closePosition(
             @RequestParam("userId") UUID userId,
             @PathVariable("positionId") int positionId,
-            @RequestParam(value = "unitsToDeduct", required = false) Double unitsToDeduct) {
+            @RequestParam(value = "unitsToDeduct", required = false) Double unitsToDeduct,
+            @RequestParam(value = "demo", required = false) Boolean demo) {
         try {
-            return etoroClient.closePosition(userId, positionId, unitsToDeduct);
+            return etoroClient.closePosition(
+                    userId, positionId, unitsToDeduct, resolveDemo(demo));
         } catch (Exception e) {
             throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR,
                     "eToro close position failed: " + e.getMessage());
@@ -127,9 +100,9 @@ public class EtoroTradingController {
     public Map<String, Object> cancelOrder(
             @RequestParam("userId") UUID userId,
             @PathVariable("orderId") int orderId,
-            @RequestParam(value = "demo", defaultValue = "false") boolean demo) {
+            @RequestParam(value = "demo", required = false) Boolean demo) {
         try {
-            return etoroClient.cancelOpenOrder(userId, orderId, demo);
+            return etoroClient.cancelOpenOrder(userId, orderId, resolveDemo(demo));
         } catch (Exception e) {
             throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR,
                     "eToro cancel order failed: " + e.getMessage());
@@ -143,6 +116,7 @@ public class EtoroTradingController {
     public Map<String, Object> updateStopLoss(
             @RequestParam("userId") UUID userId,
             @PathVariable("positionId") int positionId,
+            @RequestParam(value = "demo", required = false) Boolean demo,
             @RequestBody Map<String, Object> body) {
         try {
             Object slValue = body.get("stopLoss") != null ? body.get("stopLoss") : body.get("StopLossRate");
@@ -151,7 +125,7 @@ public class EtoroTradingController {
                         "Missing required field: stopLoss");
             }
             java.math.BigDecimal stopLoss = new java.math.BigDecimal(slValue.toString());
-            return etoroClient.updateStopLoss(userId, positionId, stopLoss);
+            return etoroClient.updateStopLoss(userId, positionId, stopLoss, resolveDemo(demo));
         } catch (ResponseStatusException e) {
             throw e;
         } catch (Exception e) {
@@ -165,6 +139,7 @@ public class EtoroTradingController {
     public Map<String, Object> updateTakeProfit(
             @RequestParam("userId") UUID userId,
             @PathVariable("positionId") int positionId,
+            @RequestParam(value = "demo", required = false) Boolean demo,
             @RequestBody Map<String, Object> body) {
         try {
             Object tpValue = body.get("takeProfit") != null ? body.get("takeProfit") : body.get("TakeProfitRate");
@@ -173,7 +148,7 @@ public class EtoroTradingController {
                         "Missing required field: takeProfit");
             }
             java.math.BigDecimal takeProfit = new java.math.BigDecimal(tpValue.toString());
-            return etoroClient.setTakeProfit(userId, positionId, takeProfit);
+            return etoroClient.setTakeProfit(userId, positionId, takeProfit, resolveDemo(demo));
         } catch (ResponseStatusException e) {
             throw e;
         } catch (Exception e) {

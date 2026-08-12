@@ -16,6 +16,8 @@ import asyncio
 import logging
 from typing import Any, Optional
 
+from app.settings import settings
+
 from .models import (
     MarketSnapshot,
     PositionRiskState,
@@ -127,7 +129,8 @@ class PositionRiskManager:
         if rate is None:
             try:
                 open_positions = await self._etoro.get_open_positions(
-                    position.user_id, demo=True
+                    position.user_id,
+                    demo=settings.use_demo_account,
                 )
                 for p in open_positions:
                     if int(p.get("positionID", 0)) == position.position_id:

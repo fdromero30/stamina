@@ -56,6 +56,9 @@ services:
       # Mocks are DISABLED by default. Enable explicitly with ETORO_MOCK=true
       # only for local development without a real eToro account.
       ETORO_MOCK: ${ETORO_MOCK:-false}
+      # Execute against the eToro DEMO account (default true). The real
+      # execution routes return 404 RouteNotFound for demo keys.
+      ETORO_DEMO: ${ETORO_DEMO:-true}
       # CORS: production frontend origin(s) allowed
       CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-}
       SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE:-prod}
@@ -73,6 +76,8 @@ services:
       # PostgreSQL (Supabase transaction pooler) para persistir bot_runs/bot_cycles.
       # Vacío → SQLite local (los ciclos se pierden al recrear el contenedor).
       DATABASE_URL: ${DATABASE_URL:-}
+      # Mirrors ETORO_DEMO for the Python engine (demo account trading).
+      USE_DEMO_ACCOUNT: ${USE_DEMO_ACCOUNT:-true}
     volumes:
       - stamina_trading_data:/app/data
     depends_on:

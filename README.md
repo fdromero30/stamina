@@ -178,6 +178,8 @@ Todas las variables están documentadas en [`.env.example`](.env.example):
 | `ETORO_API_BASE_URL` | URL base de la API de eToro | `https://public-api.etoro.com/api/v1` |
 | `ETORO_API_KEY` | API key de eToro | `replace_me` |
 | `ETORO_ACCOUNT_ID` | ID de cuenta eToro | `replace_me` |
+| `ETORO_DEMO` | Ejecutar operaciones contra la cuenta DEMO de eToro (`true` por defecto; las rutas reales devuelven 404 RouteNotFound para claves demo) | `true` |
+| `USE_DEMO_ACCOUNT` | Espejo de `ETORO_DEMO` para el motor Python (mantener en sync) | `true` |
 | `CRYPTO_MASTER_KEY` | Clave AES-256 para cifrar API keys (**requerida**) | `a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6` |
 | `VITE_USERS_CONFIG_API_URL` | URL del backend Java (solo dev local) | `http://localhost:8080` |
 | `VITE_TRADING_CORE_URL` | URL del trading core (solo dev local) | `http://localhost:8000` |

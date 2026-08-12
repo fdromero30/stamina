@@ -16,6 +16,14 @@ public class EtoroConfig {
      */
     private boolean mock = false;
 
+    /**
+     * When true (default), trading operations are executed against the eToro
+     * DEMO account instead of the real account.  The whole stack currently
+     * runs against a demo account; real execution routes return
+     * 404 RouteNotFound for demo keys.  Overridable via ETORO_DEMO.
+     */
+    private boolean demoMode = true;
+
     public String getApiBaseUrl() {
         return apiBaseUrl;
     }
@@ -30,5 +38,13 @@ public class EtoroConfig {
 
     public void setMock(boolean mock) {
         this.mock = mock;
+    }
+
+    public boolean isDemoMode() {
+        return demoMode;
+    }
+
+    public void setDemoMode(boolean demoMode) {
+        this.demoMode = demoMode;
     }
 }

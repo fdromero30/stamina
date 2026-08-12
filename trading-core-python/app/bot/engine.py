@@ -308,7 +308,7 @@ class TradingBotEngine:
     async def sync_positions_from_etoro(
         self,
         strategies: list[StrategyConfigDTO],
-        demo: bool = True,
+        demo: Optional[bool] = None,
     ) -> int:
         """
         Reconcile the bot's local open positions with the real open positions
@@ -325,6 +325,11 @@ class TradingBotEngine:
         Returns the number of positions imported/updated.
         """
         logger.info("Syncing open positions from eToro...")
+
+        # Demo mode is config-driven (settings.use_demo_account); an explicit
+        # per-call override wins when provided.
+        if demo is None:
+            demo = settings.use_demo_account
 
         # Map user_id -> set of instrument_ids the bot watches
         user_instruments: dict[str, set[int]] = {}
@@ -661,6 +666,7 @@ class TradingBotEngine:
             "breakEvenTrigger": settings.break_even_ratio,
             "orderType": signal.order_type,
             "limitPrice": signal.limit_price,
+            "demo": settings.use_demo_account,
         }
 
         async with httpx.AsyncClient(timeout=30) as client:
@@ -911,7 +917,7 @@ class TradingBotEngine:
                     continue
                 try:
                     await self._etoro_http_client.cancel_order(
-                        user_id, int(order_id), demo=True
+                        user_id, int(order_id)
                     )
                     logger.info("Cancelled pending order %s for user %s", order_id, user_id)
                 except Exception as e:
@@ -1048,7 +1054,7 @@ class TradingBotEngine:
 
     # ── Internal: Portfolio Balance ────────────────────────────────────
 
-    async def _get_available_balance(self, user_id: str, demo: bool = True) -> float:
+    async def _get_available_balance(self, user_id: str, demo: Optional[bool] = None) -> float:
         """
         Fetch the available cash balance from the eToro DEMO portfolio.
 
@@ -1061,11 +1067,13 @@ class TradingBotEngine:
         be read — the scheduler will skip trades with an explicit reason instead
         of silently sizing positions against a fake balance.
         """
+        if demo is None:
+            demo = settings.use_demo_account
+
         try:
-            if demo:
-                portfolio = await self._etoro_http_client.get_demo_portfolio(user_id)
-            else:
-                portfolio = await self._etoro_http_client.get_portfolio(user_id)
+            portfolio = await self._etoro_http_client.get_portfolio(
+                user_id, demo=demo
+            )
 
             # Real eToro portfolio response:
             #   { "clientPortfolio": { "credit": 1798.14, "bonusCredit": 0.0, "positions": [...] } }

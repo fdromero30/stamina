@@ -3,6 +3,7 @@ package com.stamina.usersconfig.trading.service;
 import com.stamina.usersconfig.strategy.entity.StrategyConfig;
 import com.stamina.usersconfig.strategy.repository.StrategyConfigRepository;
 import com.stamina.usersconfig.trading.client.EtoroClient;
+import com.stamina.usersconfig.trading.config.EtoroConfig;
 import com.stamina.usersconfig.trading.dto.ExecuteOrderRequest;
 import com.stamina.usersconfig.trading.dto.ExecuteOrderResponse;
 import com.stamina.usersconfig.trading.dto.ExecuteTradeRequest;
@@ -21,10 +22,22 @@ public class TradingService {
 
     private final StrategyConfigRepository strategyRepository;
     private final EtoroClient etoroClient;
+    private final EtoroConfig etoroConfig;
 
-    public TradingService(StrategyConfigRepository strategyRepository, EtoroClient etoroClient) {
+    public TradingService(StrategyConfigRepository strategyRepository,
+                          EtoroClient etoroClient,
+                          EtoroConfig etoroConfig) {
         this.strategyRepository = strategyRepository;
         this.etoroClient = etoroClient;
+        this.etoroConfig = etoroConfig;
+    }
+
+    /**
+     * Resolves the demo mode for a request: an explicit request value wins;
+     * otherwise the service-wide ETORO_DEMO configuration is used.
+     */
+    private boolean resolveDemo(Boolean requestDemo) {
+        return requestDemo != null ? requestDemo : etoroConfig.isDemoMode();
     }
 
     public ExecuteOrderResponse execute(ExecuteOrderRequest request) {
@@ -69,6 +82,9 @@ public class TradingService {
     public ExecuteTradeResponse executeSmart(ExecuteTradeRequest request) {
         UUID userId = UUID.fromString(request.userId());
 
+        // Demo mode is config-driven (ETORO_DEMO), overridable per request.
+        boolean demo = resolveDemo(request.demo());
+
         try {
             Map<String, Object> openResult;
             Integer positionId;
@@ -92,8 +108,8 @@ public class TradingService {
                         request.units(),
                         request.limitPrice(),
                         request.stopLoss(),
-                        request.takeProfit()
-                );
+                        request.takeProfit(),
+                        demo);
 
                 // Extract the OPEN ORDER id (limit orders are pending until filled)
                 positionId = extractPositionId(openResult);
@@ -124,8 +140,8 @@ public class TradingService {
                     request.instrumentId(),
                     request.isBuy(),
                     request.leverage(),
-                    request.units()
-            );
+                    request.units(),
+                    demo);
 
             // Extract position ID from the response
             positionId = extractPositionId(openResult);
@@ -138,7 +154,7 @@ public class TradingService {
             // 2. Set stop loss if provided
             if (request.stopLoss() != null) {
                 try {
-                    etoroClient.setStopLoss(userId, positionId, request.stopLoss());
+                    etoroClient.setStopLoss(userId, positionId, request.stopLoss(), demo);
                 } catch (Exception e) {
                     return ExecuteTradeResponse.error(
                             "Position " + positionId + " opened but failed to set stop loss: " + e.getMessage()
@@ -149,7 +165,7 @@ public class TradingService {
             // 3. Set take profit if provided
             if (request.takeProfit() != null) {
                 try {
-                    etoroClient.setTakeProfit(userId, positionId, request.takeProfit());
+                    etoroClient.setTakeProfit(userId, positionId, request.takeProfit(), demo);
                 } catch (Exception e) {
                     return ExecuteTradeResponse.error(
                             "Position " + positionId + " opened but failed to set take profit: " + e.getMessage()
@@ -176,9 +192,9 @@ public class TradingService {
     /**
      * Updates the stop loss on an existing position (e.g., for breakeven adjustments).
      */
-    public void updatePositionStopLoss(UUID userId, int positionId, BigDecimal newStopLoss) {
+    public void updatePositionStopLoss(UUID userId, int positionId, BigDecimal newStopLoss, boolean demo) {
         try {
-            etoroClient.updateStopLoss(userId, positionId, newStopLoss);
+            etoroClient.updateStopLoss(userId, positionId, newStopLoss, demo);
         } catch (Exception e) {
             throw new ResponseStatusException(
                     HttpStatus.INTERNAL_SERVER_ERROR,

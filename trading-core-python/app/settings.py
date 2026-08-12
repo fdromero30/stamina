@@ -8,6 +8,10 @@ class Settings(BaseSettings):
     # ── Trading Cycle ─────────────────────────────────────────────────
     trading_interval_seconds: int = 300  # 5 minutes default
     default_leverage: int = 1
+    # Execute trades against the eToro DEMO account (the whole stack runs
+    # in demo mode; real execution routes return 404 RouteNotFound for
+    # demo keys).
+    use_demo_account: bool = True
     risk_per_trade: float = 0.005  # 0.5% of available account per trade
     max_open_positions: int = 2
     break_even_ratio: float = 1.5  # Legacy: retained for backward compatibility

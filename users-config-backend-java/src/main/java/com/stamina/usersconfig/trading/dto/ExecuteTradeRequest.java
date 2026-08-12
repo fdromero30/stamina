@@ -35,6 +35,13 @@ public record ExecuteTradeRequest(
         String orderType,
 
         /** Limit price (required when orderType == "limit"). */
-        BigDecimal limitPrice
+        BigDecimal limitPrice,
+
+        /**
+         * Execute against the eToro DEMO account when true (default).
+         * The whole stack runs against a demo account, and the real
+         * execution routes return 404 RouteNotFound for demo keys.
+         */
+        Boolean demo
 ) {
 }
