@@ -32,6 +32,11 @@ public class EtoroMarketDataController {
             @RequestParam(value = "fields", defaultValue = "instrumentId,internalSymbolFull,displayname") String fields) {
         try {
             return etoroClient.searchInstruments(userId, query, fields);
+        } catch (IllegalStateException e) {
+            // The user has no eToro API key configured — this is a client
+            // configuration problem, not a server failure.
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "eToro search failed: " + e.getMessage());
         } catch (Exception e) {
             throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR,
                     "eToro search failed: " + e.getMessage());
@@ -45,6 +50,9 @@ public class EtoroMarketDataController {
             @RequestParam("instrumentIds") List<Integer> instrumentIds) {
         try {
             return etoroClient.getInstrumentRates(userId, instrumentIds);
+        } catch (IllegalStateException e) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "eToro rates failed: " + e.getMessage());
         } catch (Exception e) {
             throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR,
                     "eToro rates failed: " + e.getMessage());
@@ -61,6 +69,9 @@ public class EtoroMarketDataController {
             @RequestParam(value = "count", defaultValue = "100") int count) {
         try {
             return etoroClient.getCandles(userId, instrumentId, direction, interval, count);
+        } catch (IllegalStateException e) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "eToro candles failed: " + e.getMessage());
         } catch (Exception e) {
             throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR,
                     "eToro candles failed: " + e.getMessage());

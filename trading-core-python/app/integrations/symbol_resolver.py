@@ -136,6 +136,10 @@ class SymbolResolver:
         # Different eToro API keys can see different instrument universes.
         self._per_user_catalogues: dict[str, dict[str, dict[str, Any]]] = {}
         self._per_user_loaded_at: dict[str, float] = {}
+        # Human-readable error from the last failed catalogue fetch (cleared
+        # on success).  Callers can inspect this to give a better error to
+        # the end user.
+        self.last_error: Optional[str] = None
 
     async def resolve(self, user_id: str, symbol: str) -> Optional[int]:
         """Resolve a user-facing symbol to an eToro instrument ID (or None).
@@ -144,6 +148,10 @@ class SymbolResolver:
         static-ID fast path was removed because hardcoded IDs (0, 1, 100000,
         100001, ...) do not match the real eToro instrument IDs and caused
         HTTP 500 on every candles/rates request.
+
+        Returns the instrument ID on success, or None if the symbol could not
+        be resolved.  Callers can inspect ``self.last_error`` to get a
+        human-readable reason for the failure.
         """
         if not symbol or not symbol.strip():
             return None
@@ -218,11 +226,14 @@ class SymbolResolver:
 
         Each eToro API key sees its own instrument universe, so we cache the
         catalogue PER USER to avoid cross-user ID mismatches.
+
+        On failure, sets ``self.last_error`` to a human-readable reason.
         """
         now = time.monotonic()
         cached = self._per_user_catalogues.get(user_id)
         loaded_at = self._per_user_loaded_at.get(user_id, 0.0)
         if cached is not None and (now - loaded_at) < self._ttl:
+            self.last_error = None
             return cached
 
         try:
@@ -265,9 +276,11 @@ class SymbolResolver:
                     }
 
             if not catalogue:
+                self.last_error = "eToro returned an empty instrument catalogue"
                 logger.error("eToro instrument catalogue is empty for user %s", user_id)
                 return {}
 
+            self.last_error = None
             self._per_user_catalogues[user_id] = catalogue
             self._per_user_loaded_at[user_id] = now
             # Keep the shared global cache in sync for the chart endpoint
@@ -279,7 +292,9 @@ class SymbolResolver:
             )
             return catalogue
         except Exception as e:
-            logger.error("Failed to load eToro instrument catalogue for user %s: %s", user_id, e)
+            msg = str(e)
+            self.last_error = msg
+            logger.error("Failed to load eToro instrument catalogue for user %s: %s", user_id, msg)
             # If we have a stale cache for this user, keep using it
             stale = self._per_user_catalogues.get(user_id)
             if stale is not None:

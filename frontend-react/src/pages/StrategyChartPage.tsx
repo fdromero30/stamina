@@ -246,11 +246,30 @@ export function StrategyChartPage({ session }: StrategyChartPageProps) {
   };
 
   // ── RTK Query hooks ─────────────────────────────────────────────
-  const { data: chartData, isLoading: chartLoading, isError: chartError, refetch: refetchChart } =
-    useGetChartDataQuery(
-      { userId: session.id, symbol, interval, count: 300 },
-      { pollingInterval: 5000 }
-    );
+  const {
+    data: chartData,
+    isLoading: chartLoading,
+    isError: chartError,
+    error: chartErrorObj,
+    refetch: refetchChart,
+  } = useGetChartDataQuery(
+    { userId: session.id, symbol, interval, count: 300 },
+    { pollingInterval: 5000 }
+  );
+
+  // Surface the backend error message (e.g. "No eToro API key configured
+  // for user …") so the user knows the actual cause instead of a generic
+  // "Is the Trading Core running?" message.
+  const chartErrorMessage = (() => {
+    if (!chartErrorObj) return null;
+    const anyErr = chartErrorObj as any;
+    const detail =
+      anyErr?.data?.detail ??
+      anyErr?.data?.message ??
+      anyErr?.error ??
+      String(anyErr?.status ?? "unknown error");
+    return typeof detail === "string" ? detail : null;
+  })();
 
   const { data: status } = useGetBotStatusQuery(undefined, { pollingInterval: 5000 });
   const { data: cyclesData } = useGetBotCyclesQuery(undefined, { pollingInterval: 5000 });
@@ -736,7 +755,11 @@ export function StrategyChartPage({ session }: StrategyChartPageProps) {
             {chartError && !chartData && (
               <div className="chart-error">
                 <AlertCircle size={24} />
-                <span>Error loading chart data. Is the Trading Core running?</span>
+                <span>
+                  {chartErrorMessage
+                    ? `Error loading chart data: ${chartErrorMessage}`
+                    : "Error loading chart data. Is the Trading Core running?"}
+                </span>
               </div>
             )}
             <div ref={chartContainerRef} className="chart-container" style={{ height: chartHeight }} />

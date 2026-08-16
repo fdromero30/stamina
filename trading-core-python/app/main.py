@@ -138,6 +138,24 @@ async def chart_data(
     # 1. Resolve instrument ID (shared resolver with alias map + cached catalogue)
     instrument_id = await symbol_resolver.resolve(userId, symbol)
     if instrument_id is None:
+        # The 404 here is almost always NOT about the symbol itself — it is
+        # an upstream failure retrieving the instrument catalogue (missing
+        # eToro API key, backend down, etc).  Surface that clearly instead
+        # of the misleading "Cannot resolve symbol".
+        upstream_error = getattr(symbol_resolver, "last_error", None)
+        if upstream_error and "No eToro API key" in upstream_error:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"No eToro API key configured for user {userId}. "
+                    "Add an eToro API key in the API Keys page before loading charts."
+                ),
+            )
+        if upstream_error and "Failed to load eToro instrument catalogue" in upstream_error:
+            raise HTTPException(
+                status_code=502,
+                detail=f"Could not reach the eToro instrument catalogue: {upstream_error}",
+            )
         raise HTTPException(status_code=404, detail=f"Cannot resolve symbol {symbol}")
 
     # 2. Fetch candles
