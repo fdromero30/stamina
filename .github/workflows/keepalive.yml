@@ -12,6 +12,11 @@ on:
     - cron: '*/5 * * * *'
   workflow_dispatch: # permite ejecución manual desde la UI de GitHub
 
+# Principio de menor privilegio: el job solo necesita leer el repo
+# (aunque ni siquiera lo usa). No se otorgan tokens de escritura.
+permissions:
+  contents: read
+
 jobs:
   keepalive:
     runs-on: ubuntu-latest
