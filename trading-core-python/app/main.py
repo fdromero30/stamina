@@ -156,7 +156,19 @@ async def chart_data(
                 status_code=502,
                 detail=f"Could not reach the eToro instrument catalogue: {upstream_error}",
             )
-        raise HTTPException(status_code=404, detail=f"Cannot resolve symbol {symbol}")
+        # If we got here, the catalogue loaded fine but the symbol wasn't
+        # found.  Include diagnostic info so the UI can show a useful message
+        # instead of a bare 404.
+        catalogue_size = len(symbol_resolver._per_user_catalogues.get(userId, {}))
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                f"Cannot resolve symbol {symbol} in the eToro instrument "
+                f"catalogue ({catalogue_size} instruments loaded). "
+                "Check that the symbol is spelled correctly and is available "
+                "on eToro for this account."
+            ),
+        )
 
     # 2. Fetch candles
     candles = await market_data_client.get_candles(

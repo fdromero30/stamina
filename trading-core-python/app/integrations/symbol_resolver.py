@@ -192,16 +192,38 @@ class SymbolResolver:
         if not catalogue:
             return None
 
-        # Exact match on symbolFull
-        entry = catalogue.get(canonical.upper())
+        canonical_upper = canonical.upper()
+        canonical_norm = canonical.lower().replace("/", "")
+
+        # 1. Exact match on symbolFull
+        entry = catalogue.get(canonical_upper)
         if entry is not None:
             return entry["instrumentId"]
 
-        # Exact match on displayname (e.g. "EUR/USD" -> eurusd entry)
-        canonical_norm = canonical.lower().replace("/", "")
+        # 2. Exact match on displayname (e.g. "EUR/USD" -> eurusd entry)
         for sym_full, meta in catalogue.items():
             display_norm = meta["displayname"].lower().replace("/", "")
             if display_norm == canonical_norm:
+                return meta["instrumentId"]
+
+        # 3. Prefix match on symbolFull — eToro sometimes appends a suffix
+        #    (e.g. "EURUSD.N", "EURUSD.CFD", "EURUSD_1") to the canonical
+        #    symbolFull.  Match the shortest entry that starts with the
+        #    canonical symbol so we pick the base/spot instrument.
+        prefix_matches: list[tuple[int, str]] = []
+        for sym_full, meta in catalogue.items():
+            sym_upper = str(sym_full).upper()
+            if sym_upper.startswith(canonical_upper):
+                prefix_matches.append((len(sym_upper), sym_upper))
+        if prefix_matches:
+            prefix_matches.sort(key=lambda t: t[0])
+            shortest = prefix_matches[0][1]
+            return catalogue[shortest]["instrumentId"]
+
+        # 4. Prefix match on displayname (e.g. "EUR/USD" -> "EUR/USD (Non Expiry)")
+        for sym_full, meta in catalogue.items():
+            display_norm = meta["displayname"].lower().replace("/", "")
+            if display_norm.startswith(canonical_norm):
                 return meta["instrumentId"]
 
         return None

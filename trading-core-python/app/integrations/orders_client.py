@@ -65,11 +65,16 @@ class EtoroHttpClient:
         return settings.use_demo_account if demo is None else demo
 
     # ── Market Data ──────────────────────────────────────────────────
+    # NOTE (2026-08-21): The eToro instrument *catalogue* request
+    # (search?q=all) downloads 16k+ instruments and takes 30s+ on the free
+    # Render plan.  A 15s timeout made every first chart/bot request fail with
+    # an empty catalogue ("Cannot resolve symbol").  Use a generous timeout
+    # here since the catalogue is cached for 1h per user.
 
     async def search_instruments(
         self, user_id: str, query: str, fields: str = "instrumentId,internalSymbolFull,displayname"
     ) -> dict[str, Any]:
-        async with httpx.AsyncClient(timeout=15) as client:
+        async with httpx.AsyncClient(timeout=60) as client:
             resp = await client.get(
                 f"{self._base_url}/etoro/market-data/search",
                 params={"userId": user_id, "q": query, "fields": fields},
