@@ -40,6 +40,20 @@ class Settings(BaseSettings):
     sl_update_retry_seconds: int = 5
     min_sl_update_spacing_pips: float = 1.0
 
+    # ── Session Overlap (London–NY) ────────────────────────────────────
+    # El bot solo abre nuevas posiciones durante el solapamiento de las
+    # sesiones de Londres y Nueva York (máxima liquidez, volumen
+    # institucional y spreads bajos): Lun–Vie 08:00–12:00 hora de Nueva
+    # York (US/Eastern, DST automático).  Fuera de esa ventana el bot
+    # duerme hasta la próxima apertura, filtrando periodos muertos.
+    session_overlap_enabled: bool = True
+    session_overlap_start: str = "08:00"   # hora de Nueva York (24h)
+    session_overlap_end: str = "12:00"     # hora de Nueva York (24h)
+    session_overlap_timezone: str = "US/Eastern"
+    # Si True, las posiciones abiertas siguen gestionándose (breakeven,
+    # trailing ATR) fuera de la ventana; las entradas NUNCA se abren.
+    session_overlap_manage_positions_outside: bool = True
+
     # ── Trading Hours (EUR/USD: Sun 5pm ET → Fri 5pm ET) ──────────────
     # Use 24h format in US/Eastern timezone
     trading_window_start: str = "17:00"   # Sunday 5pm ET

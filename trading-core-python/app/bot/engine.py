@@ -10,9 +10,17 @@ from app.bot import persistence
 from app.bot.news_calendar import (
     NewsCalendarClient,
     NewsEvent,
-    find_active_blackout,
+    find_active_blackout_for_symbol,
     is_time_for_reopen_spread_check,
     seconds_until,
+    symbols_events_for_symbol,
+)
+from app.bot.pip_size import infer_pip_size_from_candles
+from app.bot.trading_hours import (
+    is_within_trading_hours as is_symbol_within_trading_hours,
+    seconds_until_next_window as symbol_seconds_until_next_window,
+    is_within_session_overlap,
+    seconds_until_next_session_overlap,
 )
 from app.bot.signals import (
     Signal,
@@ -138,97 +146,63 @@ class TradingBotEngine:
         }
 
     async def run_trading_cycle(self) -> dict[str, Any]:
-        """Execute a single trading cycle for all enabled strategies."""
+        """
+        Execute a single trading cycle for all enabled strategies.
+
+        Trading hours, news blackouts, spread filters and position limits are
+        all checked PER STRATEGY (per symbol) inside ``_evaluate_single_strategy``,
+        so EUR/USD and GOLD can run in parallel with their own schedules.
+        """
         logger.info("Starting trading cycle...")
-
-        # Check if we're within EUR/USD trading hours (Sun 5pm ET - Fri 5pm ET)
-        if not self._is_within_trading_hours():
-            next_in = self._seconds_until_next_trading_window()
-            logger.info(
-                "Outside EUR/USD trading hours, skipping cycle (next window in %.1f hours)",
-                next_in / 3600,
-            )
-            return {
-                "skipped": True,
-                "reason": "Outside trading hours",
-                "next_run_seconds": next_in,
-            }
-
-        now_utc = datetime.now(timezone.utc)
-
-        # ── News blackout (alto riesgo) ───────────────────────────────
-        # Consulta el calendario económico (caché primero; HTTP solo en
-        # arranque, long-sleep y prefetch −5min).  Si estamos dentro de un
-        # blackout High de EUR/USD, el bot se detiene y duerme hasta el
-        # final de la ventana (evento + 30 min).
-        try:
-            events = await self._news_client.get_relevant_events(now_utc)
-        except Exception as e:
-            logger.warning("News calendar check failed: %s", e)
-            events = []
-
-        blackout = find_active_blackout(
-            events,
-            now_utc,
-            before_minutes=settings.news_blackout_before_minutes,
-            after_minutes=settings.news_blackout_after_minutes,
-        )
-        if blackout is not None:
-            ev, window_start, window_end = blackout
-            key = f"{ev.event_time_utc.isoformat()}|{ev.title}"
-            if (
-                self._handled_blackout_key != key
-                and settings.news_blackout_protect_positions
-            ):
-                await self._apply_news_blackout_protection(ev)
-                self._handled_blackout_key = key
-            next_in = seconds_until(window_end, now_utc)
-            logger.info(
-                "News blackout: %s (%s) at %s — sleeping %.1f min until reopen",
-                ev.title,
-                ev.country,
-                ev.event_time_utc.isoformat(),
-                next_in / 60,
-            )
-            return {
-                "skipped": True,
-                "reason": f"News blackout: {ev.title} ({ev.country})",
-                "next_run_seconds": next_in,
-                "blackout_event": {
-                    "title": ev.title,
-                    "country": ev.country,
-                    "event_time": ev.event_time_utc.isoformat(),
-                    "window_start": window_start.isoformat(),
-                    "window_end": window_end.isoformat(),
-                },
-            }
-
-        # ── Reapertura: verificar spread antes de reanudar ────────────
-        if is_time_for_reopen_spread_check(
-            events,
-            now_utc,
-            after_minutes=settings.news_blackout_after_minutes,
-            grace_minutes=settings.news_reopen_spread_check_minutes,
-        ):
-            spread_normal = await self._check_reopen_spread()
-            if not spread_normal:
-                self._reopen_spread_retries += 1
-                logger.warning(
-                    "Spread still wide after news (retry %d) — skipping cycle",
-                    self._reopen_spread_retries,
-                )
-                return {
-                    "skipped": True,
-                    "reason": "Spread above news_reopen_max_spread_pips after news blackout",
-                    "next_run_seconds": settings.trading_interval_seconds,
-                }
-            self._reopen_spread_retries = 0
 
         results: dict[str, Any] = {
             "evaluations": [],
             "trades": [],
             "adjustments": [],
         }
+
+        # ── Global session filter (London–NY overlap) ──────────────────
+        # New trades are ONLY allowed during the London–NY session overlap
+        # (Mon–Fri 08:00–12:00 ET).  Outside that window the cycle is skipped
+        # at the ROOT so the scheduler sleeps until the next session opening
+        # instead of waking every interval in dead periods.  If configured,
+        # open positions are still risk-managed below (Option A).
+        if settings.session_overlap_enabled:
+            now_utc = datetime.now(timezone.utc)
+            if not is_within_session_overlap(
+                now_utc,
+                start=settings.session_overlap_start,
+                end=settings.session_overlap_end,
+                tz_name=settings.session_overlap_timezone,
+            ):
+                next_in = seconds_until_next_session_overlap(
+                    now_utc,
+                    start=settings.session_overlap_start,
+                    end=settings.session_overlap_end,
+                    tz_name=settings.session_overlap_timezone,
+                )
+                results["skipped"] = True
+                results["next_run_seconds"] = next_in
+                results["reason"] = (
+                    "Outside London–NY session overlap — "
+                    "next window in %.1fh" % (next_in / 3600)
+                )
+                logger.info(
+                    "%s — sleeping %.1fh (next session 08:00 ET)",
+                    results["reason"], next_in / 3600,
+                )
+
+                # Option A: keep managing open positions (breakeven/trailing)
+                # outside the session window so SL/TP protections still work.
+                if settings.session_overlap_manage_positions_outside:
+                    try:
+                        await self._check_risk_adjustments(results)
+                    except Exception:
+                        logger.exception(
+                            "Risk adjustments failed while outside session window"
+                        )
+
+                return results
 
         try:
             # 1. Fetch all enabled strategies
@@ -425,6 +399,19 @@ class TradingBotEngine:
                     no_tp = ep.get("isNoTakeProfit", False)
                     take_profit = float(tp) if tp is not None and not no_tp and float(tp) > 0 else None
 
+                # Determine the symbol for this instrument (from the strategy
+                # that watches it) so risk adjustments resolve the right one.
+                pos_symbol = "EUR/USD"
+                for s in strategies:
+                    if s.user_id == user_id:
+                        try:
+                            inst = await self._resolve_instrument_id(user_id, s.symbol)
+                            if inst == instrument_id:
+                                pos_symbol = s.symbol
+                                break
+                        except Exception:
+                            pass
+
                 position = {
                     "position_id": int(pid),
                     "entry_price": entry,
@@ -433,6 +420,7 @@ class TradingBotEngine:
                     "is_buy": is_buy,
                     "breakeven_applied": False,
                     "opened_at": opened_at,
+                    "symbol": pos_symbol,
                     "source": "etoro_sync",
                 }
 
@@ -563,6 +551,90 @@ class TradingBotEngine:
 
         try:
             uid = user_id or strategy.user_id
+            now_utc = datetime.now(timezone.utc)
+
+            # ── Global session filter (London–NY overlap) ────────────
+            # Defensive per-strategy check: covers manual triggers
+            # (/bot/cycle and /bot/evaluate/{id}) that bypass the root
+            # check in run_trading_cycle().
+            if settings.session_overlap_enabled and not is_within_session_overlap(
+                now_utc,
+                start=settings.session_overlap_start,
+                end=settings.session_overlap_end,
+                tz_name=settings.session_overlap_timezone,
+            ):
+                next_in = seconds_until_next_session_overlap(
+                    now_utc,
+                    start=settings.session_overlap_start,
+                    end=settings.session_overlap_end,
+                    tz_name=settings.session_overlap_timezone,
+                )
+                result["skipped"] = True
+                result["reason"] = "Outside London–NY session overlap"
+                result["next_run_seconds"] = next_in
+                logger.info(
+                    "Outside London–NY session overlap — skipping strategy %s "
+                    "(next session in %.1fh)",
+                    strategy.id, next_in / 3600,
+                )
+                return result
+
+            # ── Per-symbol trading hours ────────────────────────────
+            if not is_symbol_within_trading_hours(strategy.symbol, now_utc):
+                next_in = symbol_seconds_until_next_window(strategy.symbol, now_utc)
+                result["skipped"] = True
+                result["reason"] = f"Outside {strategy.symbol} trading hours"
+                result["next_run_seconds"] = next_in
+                logger.info(
+                    "Symbol %s outside trading hours — skipping strategy %s (next window in %.1fh)",
+                    strategy.symbol, strategy.id, next_in / 3600,
+                )
+                return result
+
+            # ── Per-symbol news blackout (alto riesgo) ──────────────
+            try:
+                events = await self._news_client.get_relevant_events_for_symbol(
+                    strategy.symbol, now_utc
+                )
+            except Exception as e:
+                logger.warning(
+                    "News calendar check failed for %s: %s", strategy.symbol, e
+                )
+                events = []
+
+            blackout = find_active_blackout_for_symbol(
+                events,
+                strategy.symbol,
+                now_utc,
+                before_minutes=settings.news_blackout_before_minutes,
+                after_minutes=settings.news_blackout_after_minutes,
+            )
+            if blackout is not None:
+                ev, window_start, window_end = blackout
+                key = f"{ev.event_time_utc.isoformat()}|{ev.title}"
+                if (
+                    self._handled_blackout_key != key
+                    and settings.news_blackout_protect_positions
+                ):
+                    await self._apply_news_blackout_protection(ev)
+                    self._handled_blackout_key = key
+                next_in = seconds_until(window_end, now_utc)
+                result["skipped"] = True
+                result["reason"] = f"News blackout: {ev.title} ({ev.country})"
+                result["next_run_seconds"] = next_in
+                result["blackout_event"] = {
+                    "title": ev.title,
+                    "country": ev.country,
+                    "event_time": ev.event_time_utc.isoformat(),
+                    "window_start": window_start.isoformat(),
+                    "window_end": window_end.isoformat(),
+                }
+                logger.info(
+                    "Blackout for %s (%s) at %s — sleeping %.1f min",
+                    ev.title, ev.country, ev.event_time_utc.isoformat(),
+                    next_in / 60,
+                )
+                return result
 
             # 1. Resolve instrument ID via search
             instrument_id = await self._resolve_instrument_id(uid, strategy.symbol)
@@ -595,6 +667,14 @@ class TradingBotEngine:
             result["bid"] = market_data.bid
             result["ask"] = market_data.ask
 
+            # ── Dynamic pip size (from real candle precision) ──────
+            pip_size = infer_pip_size_from_candles(candles)
+            result["pip_size"] = pip_size
+
+            # ── Spread (ask - bid) — dynamic filter (5% of SL) ────
+            spread = abs(market_data.ask - market_data.bid)
+            result["spread"] = spread
+
             # 4. Build strategy config for signal evaluation
             strategy_config = self._to_signal_config(strategy)
 
@@ -602,22 +682,42 @@ class TradingBotEngine:
             available_balance = await self._get_available_balance(uid)
             result["available_balance"] = available_balance
 
+            # 5b. Max open positions POR ACTIVO (mismo símbolo), no global.
+            pos_symbol = strategy.symbol
+            positions_for_symbol = [
+                p for p in self._open_positions.get(uid, [])
+                if (p.get("symbol") or "EUR/USD") == pos_symbol
+                and not p.get("is_pending_order")
+            ]
+            open_for_symbol = len(positions_for_symbol)
+            result["open_positions_for_symbol"] = open_for_symbol
+
+            max_pos = strategy.max_open_positions or settings.max_open_positions
+            if open_for_symbol >= max_pos:
+                result["skipped"] = True
+                result["reason"] = (
+                    f"Max positions reached for {strategy.symbol} "
+                    f"({open_for_symbol}/{max_pos})"
+                )
+                return result
+
             # 6. Evaluate signal (pure function) with real available balance
             signal = evaluate_ma_strategy(
                 strategy=strategy_config,
                 candles=candles,
                 market_data=market_data,
                 account_balance=available_balance,
-                open_positions_count=open_positions_count,
+                open_positions_count=open_for_symbol,
                 swing_lookback=settings.swing_lookback_candles,
                 risk_per_trade=settings.risk_per_trade,
-                max_positions=settings.max_open_positions,
+                max_positions=max_pos,
                 crossover_window=settings.crossover_window_candles,
                 risk_reward_ratio=settings.risk_reward_ratio,
                 atr_period=settings.atr_period,
                 max_candle_expansion_atr_mult=settings.max_candle_expansion_atr_mult,
                 sl_atr_multiplier=settings.sl_atr_multiplier,
                 sl_min_distance_pips=settings.sl_min_distance_pips,
+                pip_size=pip_size,
             )
 
             result["signal"] = {
@@ -632,6 +732,49 @@ class TradingBotEngine:
                 "order_type": signal.order_type,
                 "limit_price": signal.limit_price,
             }
+
+            # ── Spread filter: skip if spread > 5% of the SL distance ──
+            if signal.action in (SignalAction.BUY, SignalAction.SELL) and signal.stop_loss:
+                sl_distance = abs(signal.entry_price - signal.stop_loss)
+                if sl_distance > 0:
+                    spread_ratio = spread / sl_distance
+                    if spread_ratio > 0.05:  # 5% of SL
+                        result["skipped"] = True
+                        result["reason"] = (
+                            f"Spread too high: {spread:.5f} ({spread_ratio*100:.1f}% of SL "
+                            f"{sl_distance:.5f}) — skipping {strategy.symbol}"
+                        )
+                        result["spread_ratio_of_sl"] = round(spread_ratio, 4)
+                        logger.info(
+                            "Spread %.5f = %.1f%% of SL %.5f for %s — skipping",
+                            spread, spread_ratio * 100, sl_distance, strategy.symbol,
+                        )
+                        return result
+
+            # ── Liquidity check: available balance must cover the risk ──
+            if signal.action in (SignalAction.BUY, SignalAction.SELL) and signal.stop_loss:
+                # Risk of this new position (in account currency)
+                new_risk = available_balance * settings.risk_per_trade
+                # Risk already committed by open positions (same user)
+                committed_risk = 0.0
+                for p in self._open_positions.get(uid, []):
+                    if p.get("is_pending_order"):
+                        continue
+                    entry = p.get("entry_price") or 0
+                    sl = p.get("stop_loss") or p.get("sl_original") or 0
+                    if entry > 0 and sl > 0:
+                        committed_risk += available_balance * settings.risk_per_trade
+                if committed_risk + new_risk > available_balance:
+                    result["skipped"] = True
+                    result["reason"] = (
+                        f"Insufficient liquidity: committed={committed_risk:.2f} "
+                        f"+ new={new_risk:.2f} > balance={available_balance:.2f}"
+                    )
+                    logger.info(
+                        "Insufficient liquidity for %s: committed=%.2f new=%.2f balance=%.2f",
+                        strategy.symbol, committed_risk, new_risk, available_balance,
+                    )
+                    return result
 
             # 7. Execute trade if signal is actionable
             if execute and signal.action in (SignalAction.BUY, SignalAction.SELL):
@@ -663,6 +806,7 @@ class TradingBotEngine:
                         is_buy=signal.action == SignalAction.BUY,
                         order_type=signal.order_type,
                         units=signal.units,
+                        symbol=strategy.symbol,
                     )
                 else:
                     logger.warning(
@@ -843,6 +987,7 @@ class TradingBotEngine:
         is_buy: bool,
         order_type: str = "market",
         units: float = 0.0,
+        symbol: str = "EUR/USD",
     ) -> None:
         """Track an open position (or pending limit order) in memory."""
         # Never track phantom positions: eToro never returns 0/negative IDs
@@ -870,6 +1015,7 @@ class TradingBotEngine:
             "is_buy": is_buy,
             "breakeven_applied": False,
             "opened_at": datetime.now(timezone.utc).isoformat(),
+            "symbol": symbol,
             # Risk state machine fields
             "state": 0,
             "sl_original": stop_loss,
@@ -977,10 +1123,7 @@ class TradingBotEngine:
 
     def _symbol_for_position(self, position: dict[str, Any]) -> str:
         """Best-effort symbol lookup for a position (defaults to EUR/USD)."""
-        # Positions do not store the symbol directly today; the strategy
-        # symbol is EUR/USD in the default setup.  For custom strategies the
-        # engine already resolved the instrument at trade time.
-        return "EUR/USD"
+        return position.get("symbol") or "EUR/USD"
 
     # ── Internal: News Blackout Protection ─────────────────────────────
 

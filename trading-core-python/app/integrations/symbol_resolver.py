@@ -68,13 +68,14 @@ SYMBOL_ALIASES: dict[str, str] = {
     "EUR/GBP": "EURGBP",
     "EURJPY": "EURJPY",
     "EUR/JPY": "EURJPY",
-    # Metals
-    "XAUUSD": "XAUUSD",
-    "XAU/USD": "XAUUSD",
-    "GOLD": "XAUUSD",
-    "XAGUSD": "XAGUSD",
-    "XAG/USD": "XAGUSD",
-    "SILVER": "XAGUSD",
+    # Metals — eToro's instrument catalogue uses "GOLD" (instrumentID 18,
+    # symbolFull "GOLD", displayname "Gold (Non Expiry)"), NOT "XAUUSD".
+    "XAUUSD": "GOLD",
+    "XAU/USD": "GOLD",
+    "GOLD": "GOLD",
+    "XAGUSD": "SILVER",
+    "XAG/USD": "SILVER",
+    "SILVER": "SILVER",
     # Indices
     "SPX500": "SPX500",
     "NAS100": "NAS100",
@@ -129,7 +130,7 @@ class SymbolResolver:
     ) -> None:
         self._client = etoro_client
         self._ttl = cache_ttl_seconds
-        # Cache format: { "symbolFull": { "instrumentId": int, "displayname": str } }
+        # Cache format: { "symbolFull": { "instrumentId": int, "displayname": str, "instrumentTypeID": int } }
         self._catalogue: Optional[dict[str, dict[str, Any]]] = None
         self._catalogue_loaded_at: float = 0.0
         # Cache of per-user instrument catalogues: { user_id: catalogue }
@@ -273,6 +274,9 @@ class SymbolResolver:
                     catalogue[str(symbol_full).upper()] = {
                         "instrumentId": int(inst_id),
                         "displayname": str(display_name),
+                        "instrumentTypeID": int(inst.get("instrumentTypeID") or 0)
+                        if inst.get("instrumentTypeID") is not None
+                        else None,
                     }
 
             if not catalogue:

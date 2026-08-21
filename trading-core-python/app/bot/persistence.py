@@ -204,6 +204,7 @@ def init_db() -> None:
             is_buy INTEGER NOT NULL,
             breakeven_applied INTEGER NOT NULL DEFAULT 0,
             opened_at TEXT NOT NULL,
+            symbol TEXT,
             -- Risk state machine columns
             state INTEGER NOT NULL DEFAULT 0,
             sl_original REAL,
@@ -228,6 +229,9 @@ def init_db() -> None:
         ("highest_price", "REAL"),
         ("lowest_price", "REAL"),
         ("spread_real", "REAL"),
+        # Per-symbol support: identifies which instrument a position belongs to
+        # (EUR/USD, GOLD, ...) so risk adjustments resolve the right instrument.
+        ("symbol", "TEXT"),
     ])
     # Backfill sl_original for existing positions at state 0 (their current SL is the original)
     try:
@@ -406,9 +410,9 @@ def save_position(user_id: str, position: dict[str, Any]) -> None:
         """
         INSERT INTO open_positions (
             user_id, position_id, entry_price, stop_loss, take_profit,
-            is_buy, breakeven_applied, opened_at,
+            is_buy, breakeven_applied, opened_at, symbol,
             state, sl_original, tp_fixed, highest_price, lowest_price, spread_real
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(user_id, position_id) DO UPDATE SET
             entry_price = excluded.entry_price,
             stop_loss = excluded.stop_loss,
@@ -416,6 +420,7 @@ def save_position(user_id: str, position: dict[str, Any]) -> None:
             is_buy = excluded.is_buy,
             breakeven_applied = excluded.breakeven_applied,
             opened_at = excluded.opened_at,
+            symbol = excluded.symbol,
             state = excluded.state,
             sl_original = excluded.sl_original,
             tp_fixed = excluded.tp_fixed,
@@ -432,6 +437,7 @@ def save_position(user_id: str, position: dict[str, Any]) -> None:
             1 if position.get("is_buy", False) else 0,
             1 if position.get("breakeven_applied", False) else 0,
             position.get("opened_at", _now_iso()),
+            position.get("symbol"),
             position.get("state", 0),
             position.get("sl_original"),
             position.get("tp_fixed"),
@@ -517,6 +523,7 @@ def load_open_positions() -> dict[str, list[dict[str, Any]]]:
             "is_buy": bool(row["is_buy"]),
             "breakeven_applied": bool(row["breakeven_applied"]),
             "opened_at": row["opened_at"],
+            "symbol": row.get("symbol"),
             "state": row.get("state", 0),
             "sl_original": row.get("sl_original"),
             "tp_fixed": row.get("tp_fixed"),

@@ -155,6 +155,8 @@ def _sl_improves_enough(
     For sells, improving means new_sl < old_sl.
     Requires an improvement of at least `min_spacing_pips` pips to avoid
     spamming the broker API on every cycle.
+    ``pip_size`` is the price of one pip for the instrument (0.0001 for
+    EUR/USD, 0.01 for GOLD) — used to convert the pip threshold to price.
     """
     if old_sl is None:
         return True

@@ -1,4 +1,10 @@
-"""News calendar client for high-impact economic events (EUR/USD blackout)."""
+"""News calendar client for high-impact economic events (per-symbol blackout).
+
+Supports per-symbol relevance filters:
+- EUR/USD (and FX pairs): countries (EUR, USD), impact High.
+- GOLD / SILVER (commodities): USD High events + commodity-specific events
+  whose title mentions Gold, Silver, Crude Oil, Oil, Commodity, etc.
+"""
 
 import logging
 from dataclasses import dataclass
@@ -10,6 +16,30 @@ import httpx
 logger = logging.getLogger(__name__)
 
 DEFAULT_CALENDAR_URL = "https://nfs.faireconomy.media/ff_calendar_thisweek.json"
+
+# ── Commodity keywords used to match events relevant to GOLD/SILVER ──────
+COMMODITY_KEYWORDS: tuple[str, ...] = (
+    "gold",
+    "gol",       # typo-safe for GOLD
+    "silver",
+    "crude",
+    "oil",
+    "commodit",
+    "copper",
+    "palladium",
+    "platinum",
+)
+
+# Symbols whose relevance filter includes commodity keywords.
+_COMMODITY_SYMBOLS: frozenset[str] = frozenset(
+    {"GOLD", "SILVER", "XAUUSD", "XAU/USD", "XAGUSD", "XAG/USD"}
+)
+# Symbols treated as classic FX (EUR + USD events).
+_FX_SYMBOLS: frozenset[str] = frozenset(
+    {"EURUSD", "EUR/USD", "GBPUSD", "GBP/USD", "USDJPY", "USD/JPY",
+     "AUDUSD", "AUD/USD", "USDCAD", "USD/CAD", "USDCHF", "USD/CHF",
+     "NZDUSD", "NZD/USD"}
+)
 
 
 @dataclass(frozen=True)
@@ -29,7 +59,7 @@ def parse_news_calendar(
     relevant_countries: tuple[str, ...] = ("EUR", "USD"),
     relevant_impacts: tuple[str, ...] = ("High",),
 ) -> list[NewsEvent]:
-    """Parse raw JSON from the calendar feed and keep only EUR/USD High events."""
+    """Parse raw JSON from the calendar feed and keep only matching events."""
     import json
 
     data = json.loads(raw)
@@ -113,6 +143,67 @@ def find_active_blackout(
     return None
 
 
+def _normalize_symbol(symbol: str) -> str:
+    """Normalize a user symbol for comparison (upper, no slashes/spaces)."""
+    return symbol.upper().replace("/", "").replace("-", "").replace(" ", "").strip()
+
+
+def relevant_events_for_symbol(
+    symbol: str,
+    events: list[NewsEvent],
+) -> list[NewsEvent]:
+    """Filter calendar events to those relevant for ``symbol``."""
+    norm = _normalize_symbol(symbol)
+    alias_map = {
+        "XAUUSD": "GOLD",
+        "XAU/USD": "GOLD",
+        "GOLD": "GOLD",
+        "XAGUSD": "SILVER",
+        "XAG/USD": "SILVER",
+        "SILVER": "SILVER",
+        "EUR/USD": "EURUSD",
+        "EURUSD": "EURUSD",
+    }
+    resolved = alias_map.get(norm, norm)
+
+    if resolved in _COMMODITY_SYMBOLS or resolved in {"GOLD", "SILVER"}:
+        # Relevant: USD/High events + commodity events whose title mentions
+        # gold/silver/oil/etc.
+        out: list[NewsEvent] = []
+        for ev in events:
+            if ev.impact != "High":
+                continue
+            title_lower = ev.title.lower()
+            is_usd = ev.country == "USD"
+            is_commodity = any(kw in title_lower for kw in COMMODITY_KEYWORDS)
+            if is_usd or is_commodity:
+                out.append(ev)
+        return out
+
+    if resolved in _FX_SYMBOLS:
+        return [e for e in events if e.country in ("EUR", "USD") and e.impact == "High"]
+
+    # Unknown symbol → fall back to EUR/USD behaviour (FX event filter).
+    return [e for e in events if e.country in ("EUR", "USD") and e.impact == "High"]
+
+
+def find_active_blackout_for_symbol(
+    events: list[NewsEvent],
+    symbol: str,
+    now: datetime,
+    before_minutes: int = 30,
+    after_minutes: int = 30,
+) -> Optional[tuple[NewsEvent, datetime, datetime]]:
+    """Wrapper: blackout check scoped to a symbol's relevant events."""
+    relevant = relevant_events_for_symbol(symbol, events)
+    return find_active_blackout(relevant, now, before_minutes, after_minutes)
+
+
+def symbols_events_for_symbol(symbol: str, events: list[NewsEvent]) -> list[NewsEvent]:
+    """Return events relevant to ``symbol`` (commodities included for GOLD)."""
+    return relevant_events_for_symbol(symbol, events)
+
+
 def seconds_until(target: datetime, now: datetime) -> int:
     """Whole seconds between now and target (0 if target is in the past)."""
     delta = target - _as_utc(now)
@@ -152,7 +243,7 @@ class NewsCalendarClient:
     - On first use (empty cache) → HTTP fetch.
     - After ``refresh_after_idle_minutes`` without a fetch (e.g. long sleep
       over the weekend) → HTTP fetch.
-    - ~5 minutes before a scheduled High EUR/USD event (prefetch trigger) →
+    - ~5 minutes before a scheduled High event (prefetch trigger) →
       HTTP fetch to confirm the event is still programmed.
     - Between those triggers, the cache is used — zero HTTP requests.
 
@@ -186,30 +277,29 @@ class NewsCalendarClient:
     # ── Public API ─────────────────────────────────────────────────────
 
     async def get_relevant_events(self, now: datetime, force_refresh: bool = False) -> list[NewsEvent]:
-        """
-        Return the cached relevant events, refreshing the feed only when one
-        of the allowed triggers fires (startup, long idle, pending prefetch
-        for a soon-to-start High event, or explicit force).
-        """
+        """Return the cached relevant events (all filter matches)."""
         now_utc = _as_utc(now)
         should_fetch = force_refresh or self._cache_is_stale(now_utc) or self._should_prefetch(now_utc)
         if should_fetch:
-            try:
-                await self._fetch()
-            except Exception as e:
-                logger.warning("News calendar fetch failed: %s", e)
-                if not self._cache:
-                    if self._fail_mode == "fail_closed":
-                        raise
-                    logger.warning(
-                        "News calendar unavailable and no cache — running in fail-open mode "
-                        "(bot continues trading without news blackout)"
-                    )
+            await self._fetch()
         return list(self._cache)
+
+    async def get_relevant_events_for_symbol(
+        self,
+        symbol: str,
+        now: datetime,
+        force_refresh: bool = False,
+    ) -> list[NewsEvent]:
+        """
+        Return the cached events relevant to ``symbol`` (e.g. GOLD includes
+        commodity events; EUR/USD includes EUR+USD High events).
+        """
+        all_events = await self.get_relevant_events(now, force_refresh=force_refresh)
+        return symbols_events_for_symbol(symbol, all_events)
 
     async def refresh(self) -> None:
         """Force a fresh fetch (used on bot start / manual trigger)."""
-        await self._fetch()
+        await self._fetch(raise_on_error=True)
 
     @property
     def cached_events(self) -> list[NewsEvent]:
@@ -219,15 +309,46 @@ class NewsCalendarClient:
     def last_fetch_time(self) -> Optional[datetime]:
         return self._last_fetch_time
 
-    def next_upcoming_event(self, now: datetime) -> Optional[NewsEvent]:
-        """First High EUR/USD event at or after ``now`` (from the cache)."""
+    def next_upcoming_event(self, now: datetime, symbol: Optional[str] = None) -> Optional[NewsEvent]:
+        """First High event at or after ``now`` (optionally filtered by symbol)."""
         now_utc = _as_utc(now)
-        for ev in self._cache:
+        events = self._cache
+        if symbol is not None:
+            events = symbols_events_for_symbol(symbol, events)
+        for ev in events:
             if ev.event_time_utc >= now_utc:
                 return ev
         return None
 
     # ── Internal ────────────────────────────────────────────────────────
+
+    async def _fetch(self, raise_on_error: bool = False) -> None:
+        headers = {
+            "User-Agent": "Mozilla/5.0 (compatible; stamina-trading-bot/1.0)",
+            "Accept": "application/json",
+        }
+        try:
+            async with httpx.AsyncClient(timeout=self._timeout) as client:
+                resp = await client.get(self._url, headers=headers)
+                resp.raise_for_status()
+                raw = resp.text
+            events = parse_news_calendar(
+                raw,
+                relevant_countries=self._relevant_countries,
+                relevant_impacts=self._relevant_impacts,
+            )
+            self._cache = events
+            self._last_fetch_time = datetime.now(timezone.utc)
+            logger.info("Fetched news calendar: %d relevant High events", len(events))
+        except Exception as e:
+            if raise_on_error or (self._fail_mode == "fail_closed" and not self._cache):
+                raise
+            if not self._cache:
+                logger.warning(
+                    "News calendar unavailable and no cache — running in fail-open mode "
+                    "(bot continues trading without news blackout): %s",
+                    e,
+                )
 
     def _cache_is_stale(self, now: datetime) -> bool:
         if self._last_fetch_time is None:
@@ -236,7 +357,7 @@ class NewsCalendarClient:
 
     def _should_prefetch(self, now: datetime) -> bool:
         """
-        True when a High EUR/USD event starts within the prefetch window
+        True when a High event starts within the prefetch window
         (event_time − (blackout_before + prefetch_minutes)) and has not been
         verified yet this session.
         """
@@ -253,21 +374,3 @@ class NewsCalendarClient:
                     )
                     return True
         return False
-
-    async def _fetch(self) -> None:
-        headers = {
-            "User-Agent": "Mozilla/5.0 (compatible; stamina-trading-bot/1.0)",
-            "Accept": "application/json",
-        }
-        async with httpx.AsyncClient(timeout=self._timeout) as client:
-            resp = await client.get(self._url, headers=headers)
-            resp.raise_for_status()
-            raw = resp.text
-        events = parse_news_calendar(
-            raw,
-            relevant_countries=self._relevant_countries,
-            relevant_impacts=self._relevant_impacts,
-        )
-        self._cache = events
-        self._last_fetch_time = datetime.now(timezone.utc)
-        logger.info("Fetched news calendar: %d relevant High EUR/USD events", len(events))

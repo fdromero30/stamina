@@ -445,6 +445,7 @@ def evaluate_ma_strategy(
     max_candle_expansion_atr_mult: float = 1.8,
     sl_atr_multiplier: float = 1.5,
     sl_min_distance_pips: float = 10.0,
+    pip_size: float = 0.0001,
 ) -> Signal:
     """
     Evaluate the MA200 + MA9 strategy.
@@ -461,6 +462,8 @@ def evaluate_ma_strategy(
     - Expansion filter: the entry is DISCARDED when the confirmation candle's
       body is larger than max_candle_expansion_atr_mult × ATR(atr_period)
       (avoids entering far from the optimal level after a news/expansion candle).
+    - ``pip_size``: size of one pip in price (0.0001 for EUR/USD, 0.01 for
+      GOLD).  Used to convert pip-based thresholds to price.
     """
     # ── Calculate MAs ──────────────────────────────────────────────
     closes = [c.close for c in candles]
@@ -661,8 +664,8 @@ def evaluate_ma_strategy(
             context=context,
         )
 
-    # pips → precio (1 pip = 0.0001 en pares con 4 decimales)
-    min_sl_distance_price = sl_min_distance_pips * 0.0001
+    # pips → precio (1 pip = pip_size; 0.0001 para FX, 0.01 para GOLD/xmetals)
+    min_sl_distance_price = sl_min_distance_pips * pip_size
 
     if is_buy:
         stop_loss = trend_ma200 - sl_atr_multiplier * atr
@@ -729,8 +732,9 @@ def evaluate_ma_strategy(
         "sl_basis": "ma200_atr",
         "atr_value": round(atr, 5),
         "atr_multiplier": round(sl_atr_multiplier, 3),
-        "sl_distance_pips": round(sl_distance / 0.0001, 2),
+        "sl_distance_pips": round(sl_distance / pip_size, 2),
         "min_sl_distance_pips": sl_min_distance_pips,
+        "pip_size": pip_size,
     })
 
     action = SignalAction.BUY if is_buy else SignalAction.SELL
