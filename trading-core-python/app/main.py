@@ -1,6 +1,7 @@
 """FastAPI application for the Staminia Trading Core."""
 
 import logging
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import Any, Optional
 
@@ -45,7 +46,31 @@ engine.symbol_resolver = symbol_resolver
 scheduler = TradingScheduler(interval_seconds=settings.trading_interval_seconds)
 scheduler.set_tick_handler(engine.run_trading_cycle)
 
-app = FastAPI(title="Stamina Trading Core", version="0.2.0")
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    """Auto-resume the bot scheduler after a process restart.
+
+    On startup we:
+      1. Mark any bot_runs that were left 'active' (the previous process died
+         without a graceful stop) as 'crashed'.
+      2. Re-read the persisted ``running`` flag. If the bot was running before
+         the crash/restart, resume the scheduler automatically so it keeps
+         trading in the background. If it was NOT running, leave it idle.
+    """
+    persistence.mark_crashed_runs()
+    if persistence.load_bot_state("running", False):
+        try:
+            await scheduler.start()
+            logger.info("Bot auto-resumed after restart (was running before restart)")
+        except Exception:
+            logger.exception("Failed to auto-resume bot after restart")
+    else:
+        logger.info("Bot NOT resumed: it was not running before the restart")
+    yield
+
+
+app = FastAPI(title="Stamina Trading Core", version="0.2.0", lifespan=lifespan)
 
 # CORS para localhost y Render
 app.add_middleware(
