@@ -8,8 +8,9 @@ import json
 import logging
 import sqlite3
 import uuid
+from contextlib import contextmanager
 from datetime import datetime, timezone
-from typing import Any, Optional
+from typing import Any, Iterator, Optional
 
 from ..settings import settings
 
@@ -22,6 +23,9 @@ class Database:
     def __init__(self, url: str = "") -> None:
         self._url = url.strip()
         self._conn: Any = None  # sqlite3.Connection | psycopg2 connection
+        # True while inside ``atomic()`` — per-statement commits are suppressed
+        # so the block is committed (or rolled back) as a single unit.
+        self._in_atomic: bool = False
 
     @property
     def engine(self) -> str:
@@ -57,7 +61,59 @@ class Database:
         cur = conn.cursor()
         cur.execute(self._prepare_sql(sql), params)
         self._close_cursor(cur)
+        # SQLite does NOT autocommit DML: without an explicit commit the write
+        # is rolled back when the connection closes, silently losing data
+        # (observed: `open_positions` persisted 0 rows while the engine kept
+        # positions in memory).  PostgreSQL runs with autocommit already on.
+        # Inside ``atomic()`` the per-statement commit is suppressed so the
+        # whole block commits/rolls back as one unit.
+        if self.engine == "sqlite" and not self._in_atomic:
+            try:
+                conn.commit()
+            except Exception:
+                pass
         return cur
+
+    @contextmanager
+    def atomic(self) -> Iterator[None]:
+        """Run a block of statements in a single transaction.
+
+        Commits at the end, or rolls back everything on any exception, so
+        multi-statement writes (e.g. reserving a position + updating its final
+        status) cannot leave the database half-applied.
+        """
+        conn = self._ensure_conn()
+        self._in_atomic = True
+        try:
+            if self.engine == "postgres":
+                previous = conn.autocommit
+                conn.autocommit = False
+                try:
+                    yield
+                    conn.commit()
+                except BaseException:
+                    try:
+                        conn.rollback()
+                    except Exception:
+                        pass
+                    raise
+                finally:
+                    conn.autocommit = previous
+            else:
+                cur = conn.cursor()
+                cur.execute("BEGIN")
+                self._close_cursor(cur)
+                try:
+                    yield
+                    conn.commit()
+                except BaseException:
+                    try:
+                        conn.rollback()
+                    except Exception:
+                        pass
+                    raise
+        finally:
+            self._in_atomic = False
 
     def query(self, sql: str, params: tuple = ()) -> list[dict[str, Any]]:
         conn = self._ensure_conn()
@@ -232,6 +288,13 @@ def init_db() -> None:
         # Per-symbol support: identifies which instrument a position belongs to
         # (EUR/USD, GOLD, ...) so risk adjustments resolve the right instrument.
         ("symbol", "TEXT"),
+        # Consistency lifecycle: open | closed (never physically deleted so we
+        # keep an audit trail). `client_order_ref` is the bot's own UUID for
+        # idempotent order handling.
+        ("status", "TEXT NOT NULL DEFAULT 'open'"),
+        ("client_order_ref", "TEXT"),
+        ("closed_at", "TEXT"),
+        ("close_reason", "TEXT"),
     ])
     # Backfill sl_original for existing positions at state 0 (their current SL is the original)
     try:
@@ -240,6 +303,28 @@ def init_db() -> None:
         )
     except Exception:
         pass
+
+    # Order/placement attempts — durable record of every open attempt so that
+    # even if the process dies between "reserve" and "confirm", the attempt is
+    # not lost and can be reconciled against eToro on the next startup/sync.
+    db.execute(f"""
+        CREATE TABLE IF NOT EXISTS position_attempts (
+            {_autoinc_primary_key()},
+            user_id TEXT NOT NULL,
+            client_order_ref TEXT NOT NULL UNIQUE,
+            status TEXT NOT NULL DEFAULT 'placing',   -- placing | open | failed | cancelled
+            symbol TEXT,
+            instrument_id INTEGER,
+            is_buy INTEGER,
+            units REAL,
+            request_json TEXT,
+            response_json TEXT,
+            error TEXT,
+            position_id INTEGER,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+    """)
 
     logger.info("Database initialized (engine=%s)", db.engine)
 
@@ -411,8 +496,9 @@ def save_position(user_id: str, position: dict[str, Any]) -> None:
         INSERT INTO open_positions (
             user_id, position_id, entry_price, stop_loss, take_profit,
             is_buy, breakeven_applied, opened_at, symbol,
-            state, sl_original, tp_fixed, highest_price, lowest_price, spread_real
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            state, sl_original, tp_fixed, highest_price, lowest_price, spread_real,
+            status, client_order_ref
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(user_id, position_id) DO UPDATE SET
             entry_price = excluded.entry_price,
             stop_loss = excluded.stop_loss,
@@ -426,7 +512,9 @@ def save_position(user_id: str, position: dict[str, Any]) -> None:
             tp_fixed = excluded.tp_fixed,
             highest_price = excluded.highest_price,
             lowest_price = excluded.lowest_price,
-            spread_real = excluded.spread_real
+            spread_real = excluded.spread_real,
+            status = excluded.status,
+            client_order_ref = excluded.client_order_ref
         """,
         (
             user_id,
@@ -444,7 +532,33 @@ def save_position(user_id: str, position: dict[str, Any]) -> None:
             position.get("highest_price"),
             position.get("lowest_price"),
             position.get("spread_real"),
+            position.get("status", "open"),
+            position.get("client_order_ref"),
         ),
+    )
+
+
+def update_position_status(
+    user_id: str, position_id: int, status: str,
+) -> None:
+    """Transition an open position to a new lifecycle status (open|closed)."""
+    db.execute(
+        "UPDATE open_positions SET status = ? WHERE user_id = ? AND position_id = ?",
+        (status, user_id, position_id),
+    )
+
+
+def mark_position_closed(
+    user_id: str, position_id: int, reason: str = "closed_in_etoro",
+) -> None:
+    """Mark a position as closed (audit trail) instead of deleting the row."""
+    db.execute(
+        """
+        UPDATE open_positions
+        SET status = 'closed', closed_at = ?, close_reason = ?
+        WHERE user_id = ? AND position_id = ?
+        """,
+        (_now_iso(), reason, user_id, position_id),
     )
 
 
@@ -509,7 +623,18 @@ def delete_position(user_id: str, position_id: int) -> None:
 
 
 def load_open_positions() -> dict[str, list[dict[str, Any]]]:
-    rows = db.query("SELECT * FROM open_positions ORDER BY opened_at DESC")
+    try:
+        rows = db.query(
+            "SELECT * FROM open_positions WHERE status = 'open' ORDER BY opened_at DESC"
+        )
+    except Exception:
+        # Legacy schema (pre-`status` column) — fall back to a plain read so
+        # the engine still boots before init_db() migrates the columns.
+        try:
+            rows = db.query("SELECT * FROM open_positions ORDER BY opened_at DESC")
+        except Exception as e:
+            logger.warning("Failed to load open positions: %s", e)
+            rows = []
     positions: dict[str, list[dict[str, Any]]] = {}
     for row in rows:
         user_id = row["user_id"]
@@ -533,9 +658,80 @@ def load_open_positions() -> dict[str, list[dict[str, Any]]]:
             "order_type": "market",
             "units": row.get("units", 0) if "units" in row else 0.0,
             "is_pending_order": False,
+            "status": row.get("status", "open"),
+            "client_order_ref": row.get("client_order_ref"),
         })
     return positions
 
 
 def clear_positions() -> None:
     db.execute("DELETE FROM open_positions")
+
+
+# ── Order placement attempts (idempotency + orphan reconciliation) ──────
+
+
+def create_position_attempt(
+    user_id: str,
+    client_order_ref: str,
+    *,
+    symbol: Optional[str] = None,
+    instrument_id: Optional[int] = None,
+    is_buy: Optional[bool] = None,
+    units: Optional[float] = None,
+    request_json: Any = None,
+) -> None:
+    """Reserve an order attempt BEFORE calling eToro (status='placing')."""
+    now = _now_iso()
+    db.execute(
+        """
+        INSERT INTO position_attempts (
+            user_id, client_order_ref, status, symbol, instrument_id,
+            is_buy, units, request_json, created_at, updated_at
+        ) VALUES (?, ?, 'placing', ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            user_id,
+            client_order_ref,
+            symbol,
+            instrument_id,
+            1 if is_buy else 0 if is_buy is not None else None,
+            units,
+            _dumps(request_json) if request_json is not None else None,
+            now,
+            now,
+        ),
+    )
+
+
+def resolve_position_attempt(
+    client_order_ref: str,
+    *,
+    status: str,
+    position_id: Optional[int] = None,
+    response_json: Any = None,
+    error: Optional[str] = None,
+) -> None:
+    """Finalize a placement attempt (open | failed) after eToro answers."""
+    db.execute(
+        """
+        UPDATE position_attempts
+        SET position_id = ?, status = ?, response_json = ?, error = ?, updated_at = ?
+        WHERE client_order_ref = ?
+        """,
+        (
+            position_id,
+            status,
+            _dumps(response_json) if response_json is not None else None,
+            error,
+            _now_iso(),
+            client_order_ref,
+        ),
+    )
+
+
+def load_placing_attempts() -> list[dict[str, Any]]:
+    """Attempts left in 'placing' (process died mid-flight) for reconciliation."""
+    return db.query(
+        "SELECT * FROM position_attempts WHERE status = 'placing' ORDER BY created_at ASC"
+    )

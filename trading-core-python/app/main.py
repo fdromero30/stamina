@@ -330,6 +330,9 @@ async def bot_status() -> dict[str, object]:
         "strategy": strategy,
         "run_id": getattr(scheduler, "_run_id", None),
         "next_blackout": next_blackout,
+        # eToro consistency observability
+        "etoro_synced_at": engine.etoro_synced_at,
+        "last_etoro_error": engine.last_etoro_error,
     }
 
 
@@ -341,10 +344,26 @@ async def bot_cycles() -> dict[str, object]:
     for run in runs:
         cycles = persistence.load_cycles_by_run(run["id"], limit=100)
         runs_with_cycles.append({**run, "cycles": cycles})
+
+    # Per-user authoritative eToro snapshot (balance + real positions).
+    portfolio: dict[str, dict[str, Any]] = {}
+    for user_id, snap in engine.portfolio_snapshot.items():
+        portfolio[user_id] = {
+            "available_balance": snap.available_balance,
+            "positions_count": len(snap.positions),
+            "fetched_at": snap.fetched_at.isoformat() if snap.fetched_at else None,
+            "error": snap.error,
+        }
+
     return {
         "runs": runs_with_cycles,
         "recent_cycles": scheduler.cycle_history,
         "open_positions": engine.open_positions,
+        # eToro consistency observability
+        "etoro_synced_at": engine.etoro_synced_at,
+        "last_etoro_error": engine.last_etoro_error,
+        "etoro_positions": engine.etoro_positions_by_user,
+        "portfolio": portfolio,
     }
 
 

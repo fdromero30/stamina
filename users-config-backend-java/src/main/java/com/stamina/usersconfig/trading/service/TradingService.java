@@ -184,7 +184,9 @@ public class TradingService {
                 } catch (Exception e) {
                     log.warn("Position {} opened but stop loss rejected: {}", positionId, e.getMessage());
                     return ExecuteTradeResponse.error(
-                            "Position " + positionId + " opened but failed to set stop loss: " + e.getMessage()
+                            "Position " + positionId + " opened but failed to set stop loss: " + e.getMessage(),
+                            positionId,
+                            openResult
                     );
                 }
             }
@@ -196,7 +198,9 @@ public class TradingService {
                 } catch (Exception e) {
                     log.warn("Position {} opened but take profit rejected: {}", positionId, e.getMessage());
                     return ExecuteTradeResponse.error(
-                            "Position " + positionId + " opened but failed to set take profit: " + e.getMessage()
+                            "Position " + positionId + " opened but failed to set take profit: " + e.getMessage(),
+                            positionId,
+                            openResult
                     );
                 }
             }

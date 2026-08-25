@@ -39,6 +39,11 @@ export type BotCyclesResponse = {
   runs: BotRun[];
   recent_cycles: CycleHistoryEntry[];
   open_positions: Record<string, OpenPosition[]>;
+  // eToro consistency observability
+  etoro_synced_at?: string | null;
+  last_etoro_error?: string | null;
+  etoro_positions?: Record<string, any[]>;
+  portfolio?: Record<string, { available_balance: number; positions_count: number; fetched_at: string | null; error: string | null }>;
 };
 
 export type CycleResult = {

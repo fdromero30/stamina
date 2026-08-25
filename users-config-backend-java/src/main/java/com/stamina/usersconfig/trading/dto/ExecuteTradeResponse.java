@@ -25,4 +25,14 @@ public record ExecuteTradeResponse(
     public static ExecuteTradeResponse error(String message) {
         return new ExecuteTradeResponse("error", message, null, null, null);
     }
+
+    /**
+     * Error response that still carries a real position id. Used when eToro DID
+     * open the position but a subsequent SL/TP update was rejected — the Python
+     * engine MUST still track that position (real money exposure) instead of
+     * treating the whole order as rejected.
+     */
+    public static ExecuteTradeResponse error(String message, Integer positionId, Map<String, Object> rawResponse) {
+        return new ExecuteTradeResponse("error", message, positionId, rawResponse, null);
+    }
 }

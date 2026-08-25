@@ -1,6 +1,9 @@
 """Deterministic trading engine - the core orchestrator."""
 
+import asyncio
 import logging
+import uuid
+from dataclasses import dataclass, field
 from datetime import datetime, timezone, timedelta
 from typing import Any, Optional
 
@@ -45,6 +48,36 @@ from app.risk.state_machine import compute_risk_from_price
 from app.settings import settings
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class PortfolioSnapshot:
+    """Authoritative eToro state for one user, captured at cycle start.
+
+    Used for ALL entry decisions (position counts, available balance,
+    committed risk). Never estimated from local memory.
+    """
+
+    user_id: str
+    fetched_at: Optional[datetime] = None
+    available_balance: float = 0.0
+    positions: list[dict[str, Any]] = field(default_factory=list)
+    error: Optional[str] = None
+
+    @property
+    def has_error(self) -> bool:
+        return self.error is not None or self.available_balance <= 0
+
+    def count_for_instrument(self, instrument_id: int) -> int:
+        """Count open eToro positions on a specific instrument (by ID)."""
+        count = 0
+        for p in self.positions:
+            try:
+                if int(p.get("instrumentID")) == instrument_id:
+                    count += 1
+            except (TypeError, ValueError):
+                continue
+        return count
 
 # Try to import pytz for timezone support; fallback to UTC offset
 try:
@@ -104,6 +137,20 @@ class TradingBotEngine:
         # Restore persisted open positions
         self._open_positions = persistence.load_open_positions()
 
+        # Authoritative eToro portfolio snapshot per user, refreshed every
+        # cycle. Decisions (open counts, balance, committed risk) read THIS,
+        # never the in-memory cache.
+        self._portfolio_snapshot: dict[str, PortfolioSnapshot] = {}
+        # Raw open positions reported by eToro (all instruments, before the
+        # strategy filter) — for observability in /bot/cycles.
+        self._etoro_positions_by_user: dict[str, list[dict[str, Any]]] = {}
+        self._etoro_synced_at: Optional[datetime] = None
+        self._last_etoro_error: Optional[str] = None
+
+        # eToro rejection cooldown: key = (user_id, symbol)
+        self._reject_counters: dict[tuple[str, str], int] = {}
+        self._suspended_until: dict[tuple[str, str], datetime] = {}
+
         # Transversal risk manager — reuse any strategy's positions
         self._risk_manager = PositionRiskManager(
             etoro_http_client=self._etoro_http_client,
@@ -116,6 +163,26 @@ class TradingBotEngine:
     def open_positions(self) -> dict[str, list[dict[str, Any]]]:
         """Return the in-memory open positions tracker (per user)."""
         return self._open_positions
+
+    @property
+    def portfolio_snapshot(self) -> dict[str, PortfolioSnapshot]:
+        """Authoritative eToro state per user (positions + balance)."""
+        return self._portfolio_snapshot
+
+    @property
+    def etoro_positions_by_user(self) -> dict[str, list[dict[str, Any]]]:
+        """Raw open positions reported by eToro per user (observability)."""
+        return self._etoro_positions_by_user
+
+    @property
+    def etoro_synced_at(self) -> Optional[str]:
+        """ISO timestamp of the last successful eToro reconciliation."""
+        return self._etoro_synced_at.isoformat() if self._etoro_synced_at else None
+
+    @property
+    def last_etoro_error(self) -> Optional[str]:
+        """Last error talking to eToro (None if the last sync was clean)."""
+        return self._last_etoro_error
 
     @property
     def news_client(self) -> NewsCalendarClient:
@@ -195,6 +262,16 @@ class TradingBotEngine:
                 # Option A: keep managing open positions (breakeven/trailing)
                 # outside the session window so SL/TP protections still work.
                 if settings.session_overlap_manage_positions_outside:
+                    # Reconcile first: eToro may have closed positions (TP/SL)
+                    # while we were outside the window. Without this, stale
+                    # positions stay in memory (and in the UI) even though they
+                    # no longer exist in eToro or anywhere else.
+                    try:
+                        await self._sync_open_positions()
+                    except Exception:
+                        logger.exception(
+                            "Position reconciliation failed while outside session window"
+                        )
                     try:
                         await self._check_risk_adjustments(results)
                     except Exception:
@@ -217,29 +294,7 @@ class TradingBotEngine:
             if not enabled:
                 logger.info("No enabled strategies found, using default hardcoded strategy")
                 # Bypass: use a default hardcoded strategy so the bot can be tested
-                default_strategy = StrategyConfigDTO(
-                    id="default-ma200-ma9",
-                    user_id="00000000-0000-0000-0000-000000000000",
-                    user_display_name="Default",
-                    name="MA200 + MA9 Crossover (Default)",
-                    symbol="EUR/USD",
-                    max_position_size=None,
-                    enabled=True,
-                    max_drawdown=None,
-                    max_risk_per_trade=None,
-                    max_daily_loss=None,
-                    max_open_positions=2,
-                    stop_loss=None,
-                    take_profit=None,
-                    spread_threshold=None,
-                    trading_window_start=None,
-                    trading_window_end=None,
-                    trailing_stop_activation=None,
-                    break_even_trigger=1.5,
-                    use_ml=False,
-                    ml_strategy_code=None,
-                )
-                enabled = [default_strategy]
+                enabled = [self._default_strategy()]
                 results["reason"] = "Using default hardcoded strategy (MA200 + MA9 EUR/USD)"
 
             logger.info("Found %d enabled strategies", len(enabled))
@@ -254,6 +309,20 @@ class TradingBotEngine:
 
             # 3. Reconcile open positions with eToro before processing
             await self.sync_positions_from_etoro(enabled)
+
+            # 3b. Capture the authoritative eToro portfolio snapshot per user
+            # (positions + available balance). ALL entry decisions for this
+            # cycle read this snapshot — never the local memory cache.
+            for user_id in user_strategies:
+                try:
+                    self._portfolio_snapshot[user_id] = await self._build_portfolio_snapshot(
+                        user_id
+                    )
+                except Exception as e:
+                    logger.warning(
+                        "Failed to capture eToro snapshot for user %s: %s", user_id, e
+                    )
+                await asyncio.sleep(0)
 
             # 4. Process each user's strategies
             for user_id, user_strats in user_strategies.items():
@@ -281,6 +350,253 @@ class TradingBotEngine:
 
     # ── Internal: Position Reconciliation with eToro ─────────────────────
 
+    def _default_strategy(self) -> StrategyConfigDTO:
+        """Fallback strategy used when the backend has no enabled strategies."""
+        return StrategyConfigDTO(
+            id="default-ma200-ma9",
+            user_id="00000000-0000-0000-0000-000000000000",
+            user_display_name="Default",
+            name="MA200 + MA9 Crossover (Default)",
+            symbol="EUR/USD",
+            max_position_size=None,
+            enabled=True,
+            max_drawdown=None,
+            max_risk_per_trade=None,
+            max_daily_loss=None,
+            max_open_positions=2,
+            stop_loss=None,
+            take_profit=None,
+            spread_threshold=None,
+            trading_window_start=None,
+            trading_window_end=None,
+            trailing_stop_activation=None,
+            break_even_trigger=1.5,
+            use_ml=False,
+            ml_strategy_code=None,
+        )
+
+    async def _sync_open_positions(self) -> None:
+        """Reconcile local open positions (memory + DB) with eToro.
+
+        Fetches the enabled strategies itself so it can be called even when
+        the main cycle has already returned early (e.g. outside the London–NY
+        session window), guaranteeing the UI never keeps stale positions that
+        eToro already closed.
+        """
+        try:
+            strategies = await self._strategies_client.get_strategies()
+            enabled = [s for s in strategies if s.enabled]
+        except Exception as e:
+            logger.warning(
+                "Failed to fetch strategies for reconciliation: %s. Using default.",
+                e,
+            )
+            enabled = []
+        if not enabled:
+            enabled = [self._default_strategy()]
+        await self.sync_positions_from_etoro(enabled)
+
+    async def _reconcile_orphan_attempts(self) -> None:
+        """Resolve placement attempts left in 'placing' (process died mid-flight).
+
+        Each attempt reserved a client_order_ref BEFORE calling eToro. Here we
+        ask eToro whether the position actually exists: if yes → mark the
+        attempt open (and re-import the position), if no → mark it failed.
+        This closes the atomicity hole between "reserve" and "confirm".
+        """
+        try:
+            attempts = persistence.load_placing_attempts()
+        except Exception as e:
+            logger.warning("Failed to load placing attempts: %s", e)
+            return
+        if not attempts:
+            return
+
+        logger.warning(
+            "Reconciling %d orphaned placement attempt(s) with eToro", len(attempts)
+        )
+        for attempt in attempts:
+            uid = attempt["user_id"]
+            ref = attempt["client_order_ref"]
+            instrument_id = attempt.get("instrument_id")
+            is_buy = bool(attempt.get("is_buy"))
+            created_at = attempt.get("created_at") or ""
+            try:
+                positions = await self._etoro_http_client.get_open_positions(uid)
+            except Exception as e:
+                logger.warning(
+                    "Cannot resolve orphan attempt %s (eToro unreachable): %s", ref, e
+                )
+                continue
+
+            # Find a position whose instrument + side matches and was opened
+            # at/after the attempt was created (avoids matching an older one).
+            match = None
+            for p in positions:
+                try:
+                    p_inst = int(p.get("instrumentID"))
+                    p_stamp = str(p.get("openDateTime") or "")
+                except (TypeError, ValueError):
+                    continue
+                if instrument_id is not None and p_inst != instrument_id:
+                    continue
+                if bool(p.get("isBuy", False)) != is_buy:
+                    continue
+                if created_at and p_stamp and p_stamp < created_at:
+                    continue
+                match = p
+                break
+
+            if match is not None:
+                await self._resolve_orphan_match(uid, ref, match, is_buy)
+            else:
+                logger.warning(
+                    "Orphan attempt %s (instrument=%s) NOT found in eToro — marking failed",
+                    ref, instrument_id,
+                )
+                try:
+                    persistence.resolve_position_attempt(
+                        ref, status="failed",
+                        error="position not found in eToro during orphan reconciliation",
+                    )
+                except Exception as e:
+                    logger.warning("Failed to resolve orphan attempt %s: %s", ref, e)
+
+    async def _resolve_orphan_match(
+        self,
+        uid: str,
+        ref: str,
+        match: dict[str, Any],
+        is_buy: bool,
+    ) -> None:
+        """Import an orphan-recovered eToro position into memory + DB."""
+        pid = int(match.get("positionID"))
+        logger.warning(
+            "Orphan attempt %s resolved: position %s EXISTS in eToro — marking open",
+            ref, pid,
+        )
+        try:
+            persistence.resolve_position_attempt(
+                ref, status="open", position_id=pid, response_json=match,
+            )
+        except Exception as e:
+            logger.warning("Failed to resolve orphan attempt %s: %s", ref, e)
+
+        entry = float(match.get("openRate") or 0)
+        if entry <= 0:
+            return
+        position = {
+            "position_id": pid,
+            "entry_price": entry,
+            "stop_loss": None,
+            "take_profit": None,
+            "is_buy": is_buy,
+            "breakeven_applied": False,
+            "opened_at": match.get("openDateTime") or datetime.now(timezone.utc).isoformat(),
+            "symbol": None,
+            "state": 0,
+            "sl_original": None,
+            "tp_fixed": None,
+            "highest_price": None,
+            "lowest_price": None,
+            "spread_real": None,
+            "order_type": "market",
+            "units": 0.0,
+            "is_pending_order": False,
+            "source": "orphan_reconcile",
+        }
+        open_list = self._open_positions.setdefault(uid, [])
+        if all(p.get("position_id") != pid for p in open_list):
+            open_list.append(position)
+            try:
+                persistence.save_position(uid, position)
+            except Exception as e:
+                logger.warning(
+                    "Failed to persist orphan-recovered position %s: %s", pid, e
+                )
+
+    def _is_symbol_suspended(self, user_id: str, symbol: str) -> Optional[int]:
+        """Return remaining suspension seconds for (user, symbol), or None."""
+        key = (user_id, symbol)
+        until = self._suspended_until.get(key)
+        if until is None:
+            return None
+        remaining = (until - datetime.now(timezone.utc)).total_seconds()
+        if remaining <= 0:
+            # Backoff expired → clear counters so trading resumes.
+            self._suspended_until.pop(key, None)
+            self._reject_counters.pop(key, None)
+            return None
+        return int(remaining)
+
+    def _register_rejection(self, user_id: str, symbol: str, message: str) -> None:
+        """Count a consecutive eToro rejection; suspend the symbol after N."""
+        key = (user_id, symbol)
+        counter = self._reject_counters.get(key, 0) + 1
+        self._reject_counters[key] = counter
+        if counter >= settings.etoro_reject_threshold:
+            self._suspended_until[key] = datetime.now(timezone.utc) + timedelta(
+                seconds=settings.etoro_reject_backoff_seconds
+            )
+            logger.warning(
+                "eToro rejected %s x%d for user %s — suspending symbol for %ds: %s",
+                symbol, counter, user_id, settings.etoro_reject_backoff_seconds, message,
+            )
+        else:
+            logger.warning(
+                "eToro rejection #%d for %s (user %s): %s",
+                counter, symbol, user_id, message,
+            )
+
+    def _clear_rejections(self, user_id: str, symbol: str) -> None:
+        key = (user_id, symbol)
+        self._reject_counters.pop(key, None)
+        self._suspended_until.pop(key, None)
+
+    async def _build_portfolio_snapshot(
+        self, user_id: str, demo: Optional[bool] = None
+    ) -> PortfolioSnapshot:
+        """Capture the authoritative eToro state for a user (balance + positions).
+
+        eToro is the source of truth for both money and open positions. Entry
+        decisions never guess from local memory: if any piece is unreadable,
+        ``has_error`` is set and the caller must skip opening new positions.
+        """
+        if demo is None:
+            demo = settings.use_demo_account
+
+        error = None
+        # Reuse the positions fetched during sync_positions_from_etoro (which
+        # runs right before this in run_trading_cycle) to avoid a second call
+        # to eToro per user per cycle. If that fetch failed, cache is absent and
+        # we retry here.
+        positions = self._etoro_positions_by_user.get(user_id)
+        if positions is None:
+            try:
+                positions = await self._etoro_http_client.get_open_positions(
+                    user_id, demo=demo
+                )
+                self._etoro_positions_by_user[user_id] = positions
+            except Exception as e:
+                error = f"get_open_positions({user_id}): {e}"
+                self._last_etoro_error = error
+                logger.warning("Portfolio snapshot failed for %s: %s", user_id, e)
+                positions = []
+
+        # Balance: reliable data or nothing. 0.0 on failure means the snapshot
+        # is NOT trustworthy → decisions must skip, never use a fake fallback.
+        available = await self._get_available_balance(user_id, demo=demo)
+        if available <= 0 and error is None:
+            error = f"available_balance<=0 for {user_id} (eToro unreachable/empty)"
+
+        return PortfolioSnapshot(
+            user_id=user_id,
+            fetched_at=datetime.now(timezone.utc),
+            available_balance=available,
+            positions=positions,
+            error=error,
+        )
+
     async def sync_positions_from_etoro(
         self,
         strategies: list[StrategyConfigDTO],
@@ -292,7 +608,7 @@ class TradingBotEngine:
 
         - Brings in positions that exist in eToro but not locally (e.g. after a
           crash/restart).
-        - Removes local positions that eToro has already closed.
+        - Marks local positions that eToro has already closed (audit trail).
         - Recomputes SL/TP using the bot's own logic (swing + R:R 2:1) on the
           current candle data.
         - Only positions whose instrument matches a symbol in an enabled
@@ -306,6 +622,15 @@ class TradingBotEngine:
         # per-call override wins when provided.
         if demo is None:
             demo = settings.use_demo_account
+
+        # Reconcile any placement attempt left half-done by a crashed process
+        # BEFORE importing/removing positions, so no real eToro position is
+        # ever invisible to the bot.
+        await self._reconcile_orphan_attempts()
+
+        # This cycle's reconciliation happened right now — used by the UI to
+        # report how fresh the Open Positions data is.
+        self._etoro_synced_at = datetime.now(timezone.utc)
 
         # Map user_id -> set of instrument_ids the bot watches
         user_instruments: dict[str, set[int]] = {}
@@ -326,7 +651,15 @@ class TradingBotEngine:
                 )
             except Exception as e:
                 logger.warning("Failed to fetch open positions for %s: %s", user_id, e)
+                self._last_etoro_error = f"get_open_positions({user_id}): {e}"
+                # Drop any stale cached positions so the snapshot (built right
+                # after) does not treat old data as authoritative.
+                self._etoro_positions_by_user.pop(user_id, None)
                 continue
+
+            # Raw authoritative view (all instruments, not only the watched ones)
+            # — exposed via /bot/cycles so the UI can show real eToro positions.
+            self._etoro_positions_by_user[user_id] = etoro_positions
 
             # Keep only positions on instruments the bot watches
             relevant = [
@@ -346,7 +679,10 @@ class TradingBotEngine:
                 if p.get("position_id") is not None
             }
 
-            # Local positions no longer open in eToro → remove
+            # Local positions no longer open in eToro → remove (memory + DB).
+            # IMPORTANT: the DB row is deleted here too. Before this fix the
+            # removal only mutated the in-memory tracker, so the `open_positions`
+            # table kept stale rows (memory/DB/eToro drifted apart).
             removed_ids = [
                 pid for pid in current_by_id if pid not in etoro_by_id
             ]
@@ -361,6 +697,17 @@ class TradingBotEngine:
                     if p.get("position_id") is not None
                     and int(p["position_id"]) not in removed_ids
                 ]
+                for pid in removed_ids:
+                    try:
+                        # Keep an audit trail instead of deleting the row:
+                        # status -> 'closed' + close_reason + closed_at.
+                        persistence.mark_position_closed(
+                            user_id, int(pid), reason="closed_in_etoro"
+                        )
+                    except Exception as e:
+                        logger.warning(
+                            "Failed to mark position %s as closed in DB: %s", pid, e
+                        )
 
             # Bring in new positions that eToro has but we don't
             kept = self._open_positions.get(user_id, [])
@@ -427,12 +774,30 @@ class TradingBotEngine:
                 if user_id not in self._open_positions:
                     self._open_positions[user_id] = []
                 self._open_positions[user_id].append(position)
-                persistence.save_position(user_id, position)
+                try:
+                    persistence.save_position(user_id, position)
+                except Exception as e:
+                    logger.warning(
+                        "Imported position #%s in memory but failed to persist to DB: %s",
+                        pid, e,
+                    )
                 imported += 1
                 logger.info(
                     "Imported position #%s (inst=%s, entry=%.5f) from eToro for user %s",
                     pid, instrument_id, entry, user_id,
                 )
+
+            # Mirror the DB with the reconciled memory. Upserts are idempotent,
+            # so this heals any row that a transient DB failure earlier left
+            # missing and guarantees DB == memory == eToro after each sync.
+            for pos in self._open_positions.get(user_id, []):
+                try:
+                    persistence.save_position(user_id, pos)
+                except Exception as e:
+                    logger.warning(
+                        "Failed to persist position %s after sync: %s",
+                        pos.get("position_id"), e,
+                    )
 
         if imported > 0:
             logger.info("Position reconciliation complete: %d position(s) imported", imported)
@@ -517,22 +882,21 @@ class TradingBotEngine:
         strategies: list[StrategyConfigDTO],
         results: dict[str, Any],
     ) -> None:
-        """Process all strategies for a single user."""
-        open_positions = self._open_positions.get(user_id, [])
-        open_count = len(open_positions)
+        """Process all strategies for a single user.
 
+        Entry decisions read the authoritative eToro portfolio snapshot (already
+        captured at cycle start), so no local counter is kept here anymore.
+        """
         for strategy in strategies:
             eval_result = await self._evaluate_single_strategy(
                 strategy=strategy,
                 execute=True,
                 user_id=user_id,
-                open_positions_count=open_count,
             )
             results["evaluations"].append(eval_result)
 
             if eval_result.get("trade_executed"):
                 results["trades"].append(eval_result)
-                open_count += 1
 
     async def _evaluate_single_strategy(
         self,
@@ -636,6 +1000,25 @@ class TradingBotEngine:
                 )
                 return result
 
+            # ── eToro rejection backoff (cooldown) ────────────────
+            # If eToro rejected this symbol N consecutive times, suspend new
+            # entries for the configured window (5 min default). Risk
+            # management of existing positions is NOT affected (that runs
+            # separately in _check_risk_adjustments).
+            suspended_remaining = self._is_symbol_suspended(uid, strategy.symbol)
+            if suspended_remaining is not None:
+                result["skipped"] = True
+                result["reason"] = (
+                    f"eToro rejection backoff for {strategy.symbol}: "
+                    f"resuming in {suspended_remaining}s"
+                )
+                result["backoff_remaining_s"] = suspended_remaining
+                logger.info(
+                    "Symbol %s suspended for user %s (backoff %ds remaining)",
+                    strategy.symbol, uid, suspended_remaining,
+                )
+                return result
+
             # 1. Resolve instrument ID via search
             instrument_id = await self._resolve_instrument_id(uid, strategy.symbol)
             if instrument_id is None:
@@ -678,18 +1061,38 @@ class TradingBotEngine:
             # 4. Build strategy config for signal evaluation
             strategy_config = self._to_signal_config(strategy)
 
-            # 5. Fetch available balance for position sizing
-            available_balance = await self._get_available_balance(uid)
-            result["available_balance"] = available_balance
+            # 5. Authoritative eToro portfolio snapshot (balance + positions).
+            # Entries are ONLY decided against what eToro actually reports —
+            # never against the local in-memory cache. If the snapshot cannot
+            # be read (eToro unreachable / zero balance) → SKIP, no fallback.
+            snapshot = self._portfolio_snapshot.get(uid)
+            if snapshot is None:
+                # Manual triggers (/bot/evaluate, /bot/cycle) that did not pass
+                # through run_trading_cycle() build the snapshot lazily.
+                snapshot = await self._build_portfolio_snapshot(uid)
+                self._portfolio_snapshot[uid] = snapshot
 
-            # 5b. Max open positions POR ACTIVO (mismo símbolo), no global.
-            pos_symbol = strategy.symbol
-            positions_for_symbol = [
-                p for p in self._open_positions.get(uid, [])
-                if (p.get("symbol") or "EUR/USD") == pos_symbol
-                and not p.get("is_pending_order")
-            ]
-            open_for_symbol = len(positions_for_symbol)
+            result["etoro_positions_count"] = len(snapshot.positions)
+            result["etoro_snapshot_error"] = snapshot.error
+            result["available_balance"] = snapshot.available_balance
+
+            if snapshot.has_error:
+                result["skipped"] = True
+                result["reason"] = (
+                    "No reliable eToro data (balance and/or positions) — "
+                    f"skipping {strategy.symbol}. {snapshot.error or ''}"
+                ).strip()
+                logger.error(
+                    "Skipping %s for user %s: no reliable eToro data (%s)",
+                    strategy.symbol, uid, snapshot.error or "balance<=0",
+                )
+                return result
+
+            available_balance = snapshot.available_balance
+
+            # 5b. Max open positions POR ACTIVO (mismo símbolo), measured from
+            # the real eToro portfolio (instrument_id match), not local memory.
+            open_for_symbol = snapshot.count_for_instrument(instrument_id)
             result["open_positions_for_symbol"] = open_for_symbol
 
             max_pos = strategy.max_open_positions or settings.max_open_positions
@@ -755,15 +1158,12 @@ class TradingBotEngine:
             if signal.action in (SignalAction.BUY, SignalAction.SELL) and signal.stop_loss:
                 # Risk of this new position (in account currency)
                 new_risk = available_balance * settings.risk_per_trade
-                # Risk already committed by open positions (same user)
-                committed_risk = 0.0
-                for p in self._open_positions.get(uid, []):
-                    if p.get("is_pending_order"):
-                        continue
-                    entry = p.get("entry_price") or 0
-                    sl = p.get("stop_loss") or p.get("sl_original") or 0
-                    if entry > 0 and sl > 0:
-                        committed_risk += available_balance * settings.risk_per_trade
+                # Risk already committed by REAL eToro open positions (same
+                # user). Pending limit orders don't exist in eToro yet, so they
+                # naturally don't commit risk here.
+                committed_risk = (
+                    float(len(snapshot.positions)) * new_risk
+                )
                 if committed_risk + new_risk > available_balance:
                     result["skipped"] = True
                     result["reason"] = (
@@ -782,21 +1182,27 @@ class TradingBotEngine:
                     user_id=uid,
                     instrument_id=instrument_id,
                     signal=signal,
+                    symbol=strategy.symbol,
                 )
-                result["trade_executed"] = trade_result.get("success", False)
                 result["trade_result"] = trade_result
 
                 position_id = trade_result.get("position_id")
-                # Only track REAL positions: eToro never returns 0/negative IDs
-                # for a valid order.  A 0/neg ID here means the upstream rejected
-                # the order but still returned HTTP 200 with a silent error body.
-                if (
-                    trade_result.get("success")
-                    and position_id is not None
+                # A positive position_id from execute-smart is ALWAYS a real
+                # fill in eToro — even when the response status is "error"
+                # (that case means the position opened but eToro rejected the
+                # SL/TP update). Such a position MUST be tracked, otherwise the
+                # bot ignores real money exposure until the next cycle sync.
+                opened_real = (
+                    position_id is not None
+                    and str(position_id).lstrip("-").isdigit()
                     and int(position_id) > 0
-                ):
-                    # Track the position in memory (limit orders are pending
-                    # until filled — flagged so the news blackout can cancel them)
+                )
+                result["trade_executed"] = opened_real
+
+                if opened_real:
+                    # Track the position in memory + DB (limit orders are
+                    # pending until filled — flagged so the news blackout can
+                    # cancel them).
                     self._track_position(
                         user_id=uid,
                         position_id=int(position_id),
@@ -807,7 +1213,29 @@ class TradingBotEngine:
                         order_type=signal.order_type,
                         units=signal.units,
                         symbol=strategy.symbol,
+                        client_order_ref=trade_result.get("client_order_ref"),
                     )
+                    # Reflect the new position in the in-memory eToro snapshot
+                    # so a second strategy on the same instrument in this same
+                    # cycle does not double-open (snapshot is otherwise frozen
+                    # at cycle start).
+                    snap = self._portfolio_snapshot.get(uid)
+                    if snap is not None:
+                        snap.positions.append({
+                            "instrumentID": instrument_id,
+                            "positionID": int(position_id),
+                            "isBuy": signal.action == SignalAction.BUY,
+                        })
+                    if not trade_result.get("success"):
+                        # Position opened but SL/TP was rejected — surface it,
+                        # and treat it as a successful open for the cooldown
+                        # (it is not a rejection of the order itself).
+                        result["sl_tp_warning"] = trade_result.get("message", "")
+                        logger.warning(
+                            "Position %s opened in eToro but SL/TP failed for %s: %s",
+                            position_id, strategy.symbol,
+                            trade_result.get("message", ""),
+                        )
                 else:
                     logger.warning(
                         "Trade NOT tracked for user %s: success=%s position_id=%s raw=%s",
@@ -815,6 +1243,17 @@ class TradingBotEngine:
                         trade_result.get("success"),
                         position_id,
                         trade_result.get("raw_response"),
+                    )
+
+                # Rejection cooldown: only deliberate refusals by eToro count
+                # (no position id / invalid id / HTTP failure). A position that
+                # DID open (even with SL/TP trouble) clears the counter.
+                if opened_real or trade_result.get("success"):
+                    self._clear_rejections(uid, strategy.symbol)
+                else:
+                    self._register_rejection(
+                        uid, strategy.symbol,
+                        trade_result.get("message", "eToro rejected order"),
                     )
             else:
                 result["trade_executed"] = False
@@ -835,8 +1274,16 @@ class TradingBotEngine:
         user_id: str,
         instrument_id: int,
         signal: Signal,
+        symbol: Optional[str] = None,
     ) -> dict[str, Any]:
-        """Execute a trade via the Java backend."""
+        """Execute a trade via the Java backend.
+
+        Atomicity window: a `position_attempts` row is reserved (status
+        'placing') BEFORE calling eToro and resolved (open/failed) AFTER. If
+        the process dies in between, the orphan reconciliation at the next
+        sync asks eToro whether the position actually exists.
+        """
+        client_order_ref = str(uuid.uuid4())
         payload = {
             "userId": user_id,
             "instrumentId": instrument_id,
@@ -849,15 +1296,50 @@ class TradingBotEngine:
             "orderType": signal.order_type,
             "limitPrice": signal.limit_price,
             "demo": settings.use_demo_account,
+            "clientOrderRef": client_order_ref,
         }
 
-        async with httpx.AsyncClient(timeout=30) as client:
-            response = await client.post(
-                f"{self._base_url}/orders/execute-smart",
-                json=payload,
+        # 1. Reserve the attempt before touching eToro (atomic reservation).
+        try:
+            persistence.create_position_attempt(
+                user_id,
+                client_order_ref,
+                symbol=symbol,
+                instrument_id=instrument_id,
+                is_buy=signal.action == SignalAction.BUY,
+                units=signal.units,
+                request_json=payload,
             )
-            response.raise_for_status()
-            data = response.json()
+        except Exception as e:
+            logger.warning("Failed to record position attempt %s: %s", client_order_ref, e)
+
+        # 2. Call execute-smart. Any HTTP-level failure is still recorded as a
+        # failed attempt (and counts toward the rejection cooldown).
+        try:
+            async with httpx.AsyncClient(timeout=30) as client:
+                response = await client.post(
+                    f"{self._base_url}/orders/execute-smart",
+                    json=payload,
+                )
+                response.raise_for_status()
+                data = response.json()
+        except Exception as e:
+            logger.error("execute-smart failed for %s: %s", instrument_id, e)
+            try:
+                persistence.resolve_position_attempt(
+                    client_order_ref, status="failed", error=f"http_error: {e}"
+                )
+            except Exception:
+                pass
+            return {
+                "success": False,
+                "position_id": None,
+                "message": f"execute-smart HTTP error: {e}",
+                "demo": settings.use_demo_account,
+                "raw_response": None,
+                "client_order_ref": client_order_ref,
+                "rejected": True,
+            }
 
         logger.info(
             "execute-smart response for instrument %d: status=%s positionId=%s message=%s",
@@ -868,6 +1350,8 @@ class TradingBotEngine:
         )
 
         position_id = data.get("positionId")
+        success = data.get("status") == "success"
+
         # eToro never returns 0/negative IDs for a real position.  Guard so a
         # silently-rejected order (HTTP 200 with an error body) is not mistaken
         # for a successful fill.
@@ -879,32 +1363,77 @@ class TradingBotEngine:
                         "execute-smart returned invalid position id %s (order rejected by eToro)",
                         position_id,
                     )
+                    try:
+                        persistence.resolve_position_attempt(
+                            client_order_ref, status="failed",
+                            response_json=data, error="invalid position id",
+                        )
+                    except Exception:
+                        pass
                     return {
                         "success": False,
                         "position_id": None,
                         "message": data.get("message", "Order rejected by eToro (invalid position id)"),
                         "demo": data.get("demo", settings.use_demo_account),
                         "raw_response": data.get("rawResponse"),
+                        "client_order_ref": client_order_ref,
+                        "rejected": True,
                     }
             except (TypeError, ValueError):
                 logger.warning(
                     "execute-smart returned non-numeric position id %s — treating as failure",
                     position_id,
                 )
+                try:
+                    persistence.resolve_position_attempt(
+                        client_order_ref, status="failed",
+                        response_json=data, error="non-numeric position id",
+                    )
+                except Exception:
+                    pass
                 return {
                     "success": False,
                     "position_id": None,
                     "message": data.get("message", "Order rejected (non-numeric position id)"),
                     "demo": data.get("demo", settings.use_demo_account),
                     "raw_response": data.get("rawResponse"),
+                    "client_order_ref": client_order_ref,
+                    "rejected": True,
                 }
 
+        # 3. Finalize the attempt. When eToro DID open the position but the
+        # response reports `error` (SL/TP rejected AFTER a successful open), the
+        # positionId is still a positive real value — resolve the attempt as
+        # 'open' and let the caller track the position. Only true rejections
+        # (no id) are recorded as 'rejected'/'failed'.
+        attempt_status = (
+            "open"
+            if position_id is not None and int(position_id) > 0
+            else "rejected"
+        )
+        try:
+            persistence.resolve_position_attempt(
+                client_order_ref, status=attempt_status,
+                position_id=int(position_id) if position_id is not None else None,
+                response_json=data,
+                error=None if success else data.get("message"),
+            )
+        except Exception as e:
+            logger.warning("Failed to resolve position attempt %s: %s", client_order_ref, e)
+
         return {
-            "success": data.get("status") == "success",
+            "success": success,
             "position_id": position_id,
             "message": data.get("message", ""),
             "demo": data.get("demo", settings.use_demo_account),
             "raw_response": data.get("rawResponse"),
+            "client_order_ref": client_order_ref,
+            # True rejection = eToro refused the OPEN itself (no real position
+            # id). When position_id>0 but status=error, eToro DID open and only
+            # the SL/TP update failed → NOT a rejection.
+            "rejected": not success and (
+                position_id is None or int(position_id) <= 0
+            ),
         }
 
     async def _resolve_instrument_id(
@@ -988,6 +1517,7 @@ class TradingBotEngine:
         order_type: str = "market",
         units: float = 0.0,
         symbol: str = "EUR/USD",
+        client_order_ref: Optional[str] = None,
     ) -> None:
         """Track an open position (or pending limit order) in memory."""
         # Never track phantom positions: eToro never returns 0/negative IDs
@@ -1027,11 +1557,20 @@ class TradingBotEngine:
             "order_type": order_type,
             "units": units,
             "is_pending_order": is_pending,
+            "client_order_ref": client_order_ref,
         }
         self._open_positions[user_id].append(position)
 
-        # Persist to database
-        persistence.save_position(user_id, position)
+        # Persist to database. The in-memory entry is kept even if this write
+        # fails (e.g. transient Supabase connection issue); the next eToro
+        # reconciliation mirrors the DB from memory so it self-heals.
+        try:
+            persistence.save_position(user_id, position)
+        except Exception as e:
+            logger.warning(
+                "Tracked position %s in memory but failed to persist to DB: %s",
+                position_id, e,
+            )
 
     async def _check_risk_adjustments(
         self,

@@ -7,6 +7,7 @@ import {
   Pause,
   Play,
   RefreshCw,
+  XCircle,
 } from "lucide-react";
 import { createChart, CandlestickSeries, LineSeries, type IChartApi, type ISeriesApi, type UTCTimestamp } from "lightweight-charts";
 import { tradingCoreUrl } from "../data/dashboard";
@@ -32,6 +33,17 @@ type ChartSeriesRefs = {
   ma200Series: ISeriesApi<"Line"> | null;
   chart: IChartApi | null;
 };
+
+function timeAgo(iso: string | null | undefined): string | null {
+  if (!iso) return null;
+  const ts = Date.parse(iso);
+  if (isNaN(ts)) return null;
+  const seconds = Math.floor((Date.now() - ts) / 1000);
+  if (seconds < 0) return "ahora mismo";
+  if (seconds < 60) return `hace ${seconds}s`;
+  if (seconds < 3600) return `hace ${Math.floor(seconds / 60)}min`;
+  return `hace ${Math.floor(seconds / 3600)}h`;
+}
 
 function parseTime(time: string | Date | undefined | null): UTCTimestamp {
   // lightweight-charts expects Unix seconds (UTC)
@@ -272,7 +284,14 @@ export function StrategyChartPage({ session }: StrategyChartPageProps) {
   })();
 
   const { data: status } = useGetBotStatusQuery(undefined, { pollingInterval: 5000 });
-  const { data: cyclesData } = useGetBotCyclesQuery(undefined, { pollingInterval: 5000 });
+  // NOTE: RTK Query keeps the LAST successful payload when a polling/refetch
+  // fails, so `cyclesData.open_positions` can be stale if the Trading Core
+  // becomes unreachable. We track the error so stale positions can be hidden
+  // instead of being rendered forever as if they were real open positions.
+  const {
+    data: cyclesData,
+    isError: cyclesIsError,
+  } = useGetBotCyclesQuery(undefined, { pollingInterval: 5000 });
 
   // Active strategy from the bot (e.g. EUR/USD MA200+MA9 default). Until the
   // user picks a symbol manually, follow the strategy the bot is executing.
@@ -810,9 +829,28 @@ export function StrategyChartPage({ session }: StrategyChartPageProps) {
 
       {/* ── Open Positions (full width, below the split) ── */}
       <div className="open-positions-section">
-        <h3>Open Positions</h3>
+        <h3>
+          Open Positions
+          {cyclesIsError ? null : (
+            <span className={`sync-badge ${cyclesData?.last_etoro_error ? "sync-badge-error" : "sync-badge-ok"}`}>
+              {timeAgo(cyclesData?.etoro_synced_at) ?? "no sync"}
+            </span>
+          )}
+        </h3>
         <div className="etoro-test-card">
-          <OpenPositionsList positions={cyclesData?.open_positions ?? {}} />
+          <OpenPositionsList positions={cyclesIsError ? {} : cyclesData?.open_positions ?? {}} />
+          {cyclesIsError && (
+            <p className="panel-muted">
+              <XCircle size={14} color="#a14535" />
+              {" "}No se pudieron refrescar las posiciones (Trading Core no responde). Los datos mostrados podrían estar obsoletos.
+            </p>
+          )}
+          {!cyclesIsError && cyclesData?.last_etoro_error && (
+            <p className="panel-muted">
+              <XCircle size={14} color="#a14535" />
+              {" "}Última sincronización con eToro falló: {cyclesData.last_etoro_error}
+            </p>
+          )}
         </div>
       </div>
     </section>

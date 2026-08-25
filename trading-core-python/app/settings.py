@@ -75,6 +75,14 @@ class Settings(BaseSettings):
     news_blackout_protect_positions: bool = True
     news_fetch_fail_mode: str = "fail_open"        # "fail_open" | "fail_closed"
 
+    # ── eToro rejection backoff (cooldown) ─────────────────────────────
+    # Si eToro rechaza la apertura de una orden (positionId nulo/<=0 o la
+    # posición no queda confirmada en el portfolio), el bot suspende la
+    # apertura de NUEVAS posiciones para ese símbolo durante este periodo.
+    # Es configurable vía entorno (ETORO_REJECT_BACKOFF_SECONDS=300 por defecto).
+    etoro_reject_backoff_seconds: int = 300        # 5 min default
+    etoro_reject_threshold: int = 3                # rechazos consecutivos hasta suspender
+
     # ── Strategy Defaults ─────────────────────────────────────────────
     default_ma_short: int = 9
     default_ma_long: int = 200
