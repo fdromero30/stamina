@@ -21,6 +21,7 @@ from app.bot.signals import (
     compute_sma,
     find_swing_low,
     find_swing_high,
+    find_structural_pivot,
     detect_ma_crossover,
     evaluate_ma_strategy,
     calculate_units,
@@ -209,6 +210,91 @@ def test_swing_detection():
     # completed swing high: 1.4 > 1.2 (c4) and 1.4 > 1.3 (c6).
     assert sh is not None and sh == 1.4, f"Expected 1.4, got {sh}"
     print("  ✓ find_swing_high: correct")
+
+
+def test_find_structural_pivot():
+    """Test the pure-fractal structural pivot (no fallback to abs min/max)."""
+    # Hay DOS swing lows: índices 2 (low=0.8) y 4 (low=1.0). La función devuelve
+    # el MÁS RECIENTE confirmado (índice 4 → 1.0). Swing high único en índice 5.
+    candles = [
+        Candle(1.0, 1.1, 0.9, 1.0),   # 0
+        Candle(1.1, 1.2, 1.0, 1.1),   # 1
+        Candle(1.0, 1.1, 0.8, 0.9),   # 2 - swing low (0.8)
+        Candle(1.2, 1.3, 1.1, 1.2),   # 3
+        Candle(1.1, 1.2, 1.0, 1.1),   # 4 - swing low (1.0) -> more recent
+        Candle(1.3, 1.4, 1.2, 1.3),   # 5 - swing high (1.4)
+        Candle(1.2, 1.3, 1.1, 1.2),   # 6
+        Candle(1.1, 1.2, 1.0, 1.1),   # 7
+    ]
+    pivot_low = find_structural_pivot(candles, window=5, is_buy=True)
+    assert pivot_low is not None and pivot_low == 1.0, f"Expected 1.0, got {pivot_low}"
+    pivot_high = find_structural_pivot(candles, window=5, is_buy=False)
+    assert pivot_high is not None and pivot_high == 1.4, f"Expected 1.4, got {pivot_high}"
+    print("  ✓ find_structural_pivot (fractal low/high): correct")
+
+    # PURE fractal: a strictly monotonic up-run has NO confirmed swing low
+    # (each low is higher than the previous), so it must return None — never
+    # fall back to the absolute minimum (which is the first candle).
+    monotonic = [
+        Candle(1.0, 1.05, 0.99, 1.02),
+        Candle(1.03, 1.06, 1.01, 1.05),
+        Candle(1.06, 1.09, 1.04, 1.08),
+        Candle(1.09, 1.12, 1.07, 1.11),
+        Candle(1.12, 1.15, 1.10, 1.14),
+    ]
+    pivot_none = find_structural_pivot(monotonic, window=5, is_buy=True)
+    assert pivot_none is None, f"Expected None (pure fractal), got {pivot_none}"
+    print("  ✓ find_structural_pivot (pure fractal → None on monotonic): correct")
+
+    # Insufficient data
+    too_short = candles[:3]
+    assert find_structural_pivot(too_short, window=5, is_buy=True) is None
+    print("  ✓ find_structural_pivot (insufficient data → None): correct")
+
+
+def test_evaluate_hold_when_no_structural_pivot():
+    """When there IS a crossover but NO confirmable fractal pivot → HOLD.
+
+    A search window larger than the available candles guarantees
+    ``find_structural_pivot`` returns None, exercising the pure-fractal guard.
+    """
+    candles = generate_mock_candles_with_crossover(
+        count=300, trend="uptrend", ma_short=9, ma_long=200
+    )
+    strategy = StrategyConfig(
+        id="test-nopivot",
+        user_id="user-1",
+        symbol="EUR/USD",
+        enabled=True,
+        ma_short_period=9,
+        ma_long_period=200,
+        max_position_size=1000.0,
+        max_open_positions=2,
+        stop_loss=None,
+        take_profit=None,
+        break_even_trigger=1.5,
+        use_ml=False,
+        ml_strategy_code=None,
+    )
+    market_data = MarketData(
+        bid=candles[-1].close - 0.0001,
+        ask=candles[-1].close + 0.0001,
+        instrument_id=12345,
+    )
+    # Ventana mayor que las velas disponibles -> sin pivote fractal -> HOLD.
+    signal = evaluate_ma_strategy(
+        strategy=strategy,
+        candles=candles,
+        market_data=market_data,
+        account_balance=10000.0,
+        open_positions_count=0,
+        structural_search_window=500,
+        colchon_atr_multiplier=0.5,
+    )
+    assert signal.action == SignalAction.HOLD, f"Expected HOLD, got {signal.action}"
+    assert signal.stop_loss is None, "No SL should be set when there is no pivot"
+    assert "No structural fractal pivot" in signal.reason, signal.reason
+    print("  ✓ HOLD when no structural fractal pivot: correct")
 
 
 def test_crossover_detection():
@@ -558,8 +644,8 @@ def test_expansion_filter_rejects_oversized_candle():
 
 def test_sl_atr_based_buy():
     """
-    Test that BUY signals use the ATR-based SL rule:
-    SL = MA200 − (sl_atr_multiplier × ATR14)
+    Test that BUY signals use the HIBRIDO ESTRUCTURAL SL rule:
+    SL = pivote fractal swing low − (colchon_atr_multiplier × ATR14)
     and that the risk is exactly 0.5% of the account balance.
     """
     random.seed(42)
@@ -604,7 +690,7 @@ def test_sl_atr_based_buy():
     print(f"  Context: {signal.context}")
 
     if signal.action == SignalAction.BUY:
-        # SL debe ser MA200 − 1.5×ATR (o el piso de 10 pips si es menor)
+        # SL debe ser PIVOTE FRACTAL − 0.5×ATR (o el piso de 10 pips si es menor)
         assert signal.stop_loss is not None
         assert signal.stop_loss < signal.entry_price, "SL < entry for BUY"
         # Distancia mínima de 10 pips
@@ -615,19 +701,24 @@ def test_sl_atr_based_buy():
         expected_risk = 10000.0 * 0.005
         assert abs(risk_amount - expected_risk) < 1.0, \
             f"Risk {risk_amount} != expected {expected_risk}"
-        # Context debe indicar la base ATR
+        # Context debe indicar la base estructural fractal + colchón
         assert signal.context is not None, "Context should be set"
-        assert signal.context.get("sl_basis") == "ma200_atr"
-        assert signal.context.get("atr_multiplier") == 1.5
-        print("  ✓ ATR-based SL (BUY): all assertions passed")
+        assert signal.context.get("sl_basis") == "structural_fractal"
+        assert signal.context.get("colchon_atr_multiplier") == 0.5
+        # TP proporcional 1:2 del riesgo
+        assert signal.take_profit is not None
+        expected_tp = signal.entry_price + abs(signal.entry_price - signal.stop_loss) * 2.0
+        assert abs(signal.take_profit - expected_tp) < 1e-4, \
+            f"TP {signal.take_profit} != {expected_tp}"
+        print("  ✓ Structural SL + TP 1:2 (BUY): all assertions passed")
     else:
         print("  ⚠ HOLD: no crossover detected in this run")
 
 
 def test_sl_atr_based_sell():
     """
-    Test that SELL signals use the ATR-based SL rule:
-    SL = MA200 + (sl_atr_multiplier × ATR14)
+    Test that SELL signals use the HIBRIDO ESTRUCTURAL SL rule:
+    SL = pivote fractal swing high + (colchon_atr_multiplier × ATR14)
     and that the risk is exactly 0.5% of the account balance.
     """
     random.seed(42)
@@ -680,8 +771,14 @@ def test_sl_atr_based_sell():
         assert abs(risk_amount - expected_risk) < 1.0, \
             f"Risk {risk_amount} != expected {expected_risk}"
         assert signal.context is not None, "Context should be set"
-        assert signal.context.get("sl_basis") == "ma200_atr"
-        print("  ✓ ATR-based SL (SELL): all assertions passed")
+        assert signal.context.get("sl_basis") == "structural_fractal"
+        assert signal.context.get("colchon_atr_multiplier") == 0.5
+        # TP proporcional 1:2 del riesgo
+        assert signal.take_profit is not None
+        expected_tp = signal.entry_price - abs(signal.entry_price - signal.stop_loss) * 2.0
+        assert abs(signal.take_profit - expected_tp) < 1e-4, \
+            f"TP {signal.take_profit} != {expected_tp}"
+        print("  ✓ Structural SL + TP 1:2 (SELL): all assertions passed")
     else:
         print("  ⚠ HOLD: no crossover detected in this run")
 

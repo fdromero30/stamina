@@ -157,6 +157,46 @@ def find_swing_high(candles: list[Candle], lookback: int) -> Optional[float]:
     return max(c.high for c in relevant)
 
 
+def find_structural_pivot(
+    candles: list[Candle],
+    window: int,
+    is_buy: bool,
+) -> Optional[float]:
+    """Find a structural FRACTAL pivot (swing low / swing high) on CLOSED candles.
+
+    For BUY  → returns the most recent confirmed swing low  (valley / lowest_low).
+    For SELL → returns the most recent confirmed swing high (crest / highest_high).
+
+    A pivot is "confirmed" only when its low (BUY) / high (SELL) is strictly
+    beyond BOTH neighbours, so it is robust against isolated wick spikes.
+
+    Uses only COMPLETED candles (excludes the forming candle ``candles[-1]``),
+    consistent with ``compute_atr``.
+
+    Returns ``None`` when no confirmed fractal pivot exists in the window —
+    PURE fractal, deliberately NO fallback to the absolute min/max. Callers must
+    decide what to do (typically emit HOLD) instead of placing an unsafe SL.
+    """
+    if window <= 0 or len(candles) < window + 2:
+        return None
+
+    # últimas `window` velas CERRADAS (+1 para poder validar vecinos en el borde)
+    relevant = candles[-(window + 1):-1]
+    if len(relevant) < 3:
+        return None
+
+    # Scan from the most recent candle backwards.
+    for i in range(len(relevant) - 2, 0, -1):
+        if is_buy:
+            if relevant[i].low < relevant[i - 1].low and relevant[i].low < relevant[i + 1].low:
+                return relevant[i].low
+        else:
+            if relevant[i].high > relevant[i - 1].high and relevant[i].high > relevant[i + 1].high:
+                return relevant[i].high
+
+    return None
+
+
 def candle_age_seconds(candle: Candle) -> Optional[int]:
     """
     Seconds elapsed since the candle's OPENING timestamp (UTC now).
@@ -445,6 +485,8 @@ def evaluate_ma_strategy(
     max_candle_expansion_atr_mult: float = 1.8,
     sl_atr_multiplier: float = 1.5,
     sl_min_distance_pips: float = 10.0,
+    structural_search_window: int = 10,
+    colchon_atr_multiplier: float = 0.5,
     pip_size: float = 0.0001,
 ) -> Signal:
     """
@@ -457,8 +499,11 @@ def evaluate_ma_strategy(
     - Price < MA200 → only SELL signals when the MA9 cross is confirmed on the
       most recent completed candle.
     - Max `max_positions` open positions at a time.
-    - SL = swing low (for buy) / swing high (for sell) before crossover.
-    - TP = risk_reward_ratio : 1.
+    - SL = HÍBRIDO ESTRUCTURAL: pivote fractal (swing low para BUY / swing high
+      para SELL) en las últimas `structural_search_window` velas CERRADAS, más
+      un colchón de `colchon_atr_multiplier` × ATR(14). Si no hay pivote → HOLD.
+    - TP = risk_reward_ratio : 1 (proyectado desde la entrada simulada
+      candles[-2].close, con riesgo = |entry - SL|).
     - Expansion filter: the entry is DISCARDED when the confirmation candle's
       body is larger than max_candle_expansion_atr_mult × ATR(atr_period)
       (avoids entering far from the optimal level after a news/expansion candle).
@@ -639,19 +684,31 @@ def evaluate_ma_strategy(
     context["expansion_filtered"] = False
 
     # ── Evaluate signal based on trend ──────────────────────────────
-    # Use the CLOSE of the completed crossover candle as the limit price.
-    # This avoids slippage: we place a LIMIT order at the exact price that
-    # triggered the signal instead of chasing the market at the current bid/ask.
-    limit_price = round(crossover_close, 5)
-    entry_price = limit_price
-
-    # ── SL: ATR-based (regla: SL = MA200 ∓ sl_atr_multiplier × ATR14) ──
-    # El ATR ya se calculó arriba para el filtro de expansión.  Para dar
-    # "aire" al SL y que eToro no lo rechace:
-    #   BUY  → SL = MA200 − (mult × ATR14)
-    #   SELL → SL = MA200 + (mult × ATR14)
+    # entry_price SIMULADO = cierre de la última vela CERRADA (candles[-2]).
+    # Es el precio de referencia sobre el que se mide el riesgo y donde se
+    # ejecuta la orden LIMIT (evita slippage vs perseguir el mercado).
     is_buy = crossover == "bullish"
 
+    if len(candles) < 2:
+        return Signal(
+            action=SignalAction.HOLD,
+            confidence=0.0,
+            units=0.0,
+            entry_price=0.0,
+            stop_loss=None,
+            take_profit=None,
+            reason="Not enough candles to compute entry close",
+            context=context,
+        )
+
+    entry_price = float(candles[-2].close)
+    limit_price = round(entry_price, 5)
+
+    # ── SL: Híbrido Estructural (pivote fractal + colchón ATR14) ────
+    # En vez de anclar el SL a la MA200 (que lejos de ella destruye la R:R),
+    # se usa el pivote estructural REAL del gráfico (swing low para BUY,
+    # swing high para SELL) y se añade una fracción de ATR(14) como colchón
+    # contra barridas de mechas. Si no hay pivote fractal confirmado → HOLD.
     if atr is None:
         return Signal(
             action=SignalAction.HOLD,
@@ -667,15 +724,38 @@ def evaluate_ma_strategy(
     # pips → precio (1 pip = pip_size; 0.0001 para FX, 0.01 para GOLD/xmetals)
     min_sl_distance_price = sl_min_distance_pips * pip_size
 
+    pivot = find_structural_pivot(candles, structural_search_window, is_buy)
+    if pivot is None:
+        context.update({
+            "sl_basis": "structural_fractal",
+            "structural_search_window": structural_search_window,
+            "colchon_atr_multiplier": round(colchon_atr_multiplier, 3),
+            "sl_reason": "No structural fractal pivot found in window",
+        })
+        return Signal(
+            action=SignalAction.HOLD,
+            confidence=0.0,
+            units=0.0,
+            entry_price=0.0,
+            stop_loss=None,
+            take_profit=None,
+            reason=(
+                f"No structural fractal pivot in last {structural_search_window} "
+                f"candles — HOLD for {'BUY' if is_buy else 'SELL'}"
+            ),
+            context=context,
+        )
+
+    cushion = colchon_atr_multiplier * atr
     if is_buy:
-        stop_loss = trend_ma200 - sl_atr_multiplier * atr
+        stop_loss = pivot - cushion
     else:
-        stop_loss = trend_ma200 + sl_atr_multiplier * atr
+        stop_loss = pivot + cushion
 
     sl_distance = abs(stop_loss - entry_price)
 
-    # Piso de seguridad: si MA200 ∓ ATR deja el SL demasiado cerca del entry,
-    # expandirlo a la distancia mínima para que eToro no rechace la orden.
+    # Piso de seguridad: si el pivote fractal deja el SL demasiado cerca del
+    # entry, expandirlo a la distancia mínima para que eToro no rechace la orden.
     if sl_distance < min_sl_distance_price:
         if is_buy:
             stop_loss = entry_price - min_sl_distance_price
@@ -686,9 +766,10 @@ def evaluate_ma_strategy(
     # Validar dirección: BUY → SL < entry; SELL → SL > entry
     if (is_buy and stop_loss >= entry_price) or (not is_buy and stop_loss <= entry_price):
         context.update({
-            "sl_basis": "ma200_atr",
+            "sl_basis": "structural_fractal",
+            "pivot": round(pivot, 5),
             "atr_value": round(atr, 5),
-            "atr_multiplier": round(sl_atr_multiplier, 3),
+            "colchon_atr_multiplier": round(colchon_atr_multiplier, 3),
             "sl_value": round(stop_loss, 5),
             "min_sl_distance_pips": sl_min_distance_pips,
             "sl_reason": "SL direction invalid relative to entry",
@@ -729,9 +810,10 @@ def evaluate_ma_strategy(
         "stop_loss": stop_loss,
         "take_profit": take_profit,
         "units": units,
-        "sl_basis": "ma200_atr",
+        "sl_basis": "structural_fractal",
+        "pivot": round(pivot, 5),
+        "colchon_atr_multiplier": round(colchon_atr_multiplier, 3),
         "atr_value": round(atr, 5),
-        "atr_multiplier": round(sl_atr_multiplier, 3),
         "sl_distance_pips": round(sl_distance / pip_size, 2),
         "min_sl_distance_pips": sl_min_distance_pips,
         "pip_size": pip_size,
@@ -740,10 +822,11 @@ def evaluate_ma_strategy(
     action = SignalAction.BUY if is_buy else SignalAction.SELL
     direction_word = "above" if is_buy else "below"
     comp_word = ">" if is_buy else "<"
+    sl_sign = "−" if is_buy else "+"
     reason = (
         f"{action.name}: price {trend_price:.5f} {comp_word} MA200 {trend_ma200:.5f}, "
         f"crossed {direction_word} MA9. Limit={limit_price:.5f}, "
-        f"SL={stop_loss:.5f} (MA200 {'∓' if is_buy else '∓'} {sl_atr_multiplier}×ATR), "
+        f"SL={stop_loss:.5f} (pivote {pivot:.5f} {sl_sign} {colchon_atr_multiplier}×ATR), "
         f"TP={take_profit:.5f}"
     )
 

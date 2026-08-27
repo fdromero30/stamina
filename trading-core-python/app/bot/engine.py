@@ -34,10 +34,8 @@ from app.bot.signals import (
     evaluate_ma_strategy,
     calculate_breakeven_stop_loss,
     calculate_take_profit,
-    compute_sma,
     compute_atr,
-    find_swing_low,
-    find_swing_high,
+    find_structural_pivot,
 )
 from app.integrations.market_data_client import MarketDataClient
 from app.integrations.orders_client import EtoroHttpClient
@@ -812,7 +810,13 @@ class TradingBotEngine:
         entry: float,
         is_buy: bool,
     ) -> tuple[Optional[float], Optional[float]]:
-        """Recompute SL (ATR-based: MA200 ∓ mult×ATR14) and TP (2:1) from candles."""
+        """Recompute SL (pivote fractal + colchón ATR14) and TP (2:1) from candles.
+
+        Consistent with the entry SL/TP in ``signals.evaluate_ma_strategy`` so
+        positions imported from eToro (sync) get the same structural logic.
+        Returns ``(None, None)`` when there is no confirmed fractal pivot or
+        the resulting SL would be invalid — the caller keeps the current values.
+        """
         try:
             candles = await self._market_data_client.get_candles(
                 user_id=user_id,
@@ -823,21 +827,22 @@ class TradingBotEngine:
             if not candles:
                 return None, None
 
-            # MA200 (último valor alineado)
-            closes = [c.close for c in candles]
-            ma_long = compute_sma(closes, settings.default_ma_long)
-            if not ma_long:
-                return None, None
-            trend_ma200 = ma_long[-1]
-
             atr = compute_atr(candles, settings.atr_period)
             if atr is None:
                 return None, None
 
+            # Pivote estructural fractal (misma ventana que la señal de entrada).
+            pivot = find_structural_pivot(
+                candles, settings.structural_search_window, is_buy
+            )
+            if pivot is None:
+                return None, None
+
+            cushion = settings.colchon_atr_multiplier * atr
             if is_buy:
-                sl = trend_ma200 - settings.sl_atr_multiplier * atr
+                sl = pivot - cushion
             else:
-                sl = trend_ma200 + settings.sl_atr_multiplier * atr
+                sl = pivot + cushion
 
             # Piso de seguridad (distancia mínima SL vs entry)
             min_sl_distance = settings.sl_min_distance_pips * 0.0001
@@ -1120,6 +1125,8 @@ class TradingBotEngine:
                 max_candle_expansion_atr_mult=settings.max_candle_expansion_atr_mult,
                 sl_atr_multiplier=settings.sl_atr_multiplier,
                 sl_min_distance_pips=settings.sl_min_distance_pips,
+                structural_search_window=settings.structural_search_window,
+                colchon_atr_multiplier=settings.colchon_atr_multiplier,
                 pip_size=pip_size,
             )
 

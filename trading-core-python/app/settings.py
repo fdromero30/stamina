@@ -26,6 +26,16 @@ class Settings(BaseSettings):
     # rechazo del broker (eToro exige un mínimo).
     sl_min_distance_pips: float = 10.0
 
+    # ── Stop Loss — Híbrido Estructural (pivote fractal + colchón ATR) ─
+    # El SL de apertura se ancla a un pivote estructural REAL del gráfico
+    # (swing low para BUY / swing high para SELL) en vez de a la MA200.
+    # Así la distancia al precio es quirúrgica y la R:R 1:2 es realista.
+    # Ventana (velas de 5M) hacia atrás para buscar el pivote fractal.
+    structural_search_window: int = 10
+    # Multiplicador de ATR(14) como "colchón" de seguridad sobre el pivote
+    # (menor al sl_atr_multiplier 1.5 porque el pivote hace el trabajo pesado).
+    colchon_atr_multiplier: float = 0.5
+
     # ── Transversal Risk Management (máquina de estados + trailing ATR) ─
     # Defaults — overridable per strategy via the Java backend.
     hito1_trigger_r: float = 1.0      # SL → breakeven + spread
