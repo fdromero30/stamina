@@ -3,6 +3,12 @@
 #
 # Render apaga los servicios free tras ~15 min sin tráfico externo.
 # Los health checks de Render NO cuentan como actividad.
+#
+# IMPORTANTE (causa habitual de "no funciona"):
+# GitHub DESACTIVA automáticamente los triggers `on: schedule` en repositorios
+# públicos tras ~60 días sin actividad en el repo. Hacer push / merge en la
+# rama default re-activa el cron. Si el keepalive deja de correr, comprueba:
+#   GitHub → Actions → "Keep Render Services Alive" → "Enable workflow".
 name: Keep Render Services Alive
 
 on:
@@ -20,12 +26,21 @@ permissions:
 jobs:
   keepalive:
     runs-on: ubuntu-latest
+    # Cada servicio se pingea en un step independiente: un fallo/timeout en uno
+    # (p. ej. cold-start del JVM del backend) NO impide despertar a los otros.
+    timeout-minutes: 10
     steps:
+      # El backend Java (Spring Boot/JVM) es un arranque lento: en plan free el
+      # cold-start puede tardar 30-90s. `--max-time` generoso + `--retry-all-errors`
+      # hace que el ping siga esperando (y despertando) al servicio aunque al
+      # primer intento reciba 502/000 mientras el contenedor bootea.
       - name: Ping Users Config Backend
-        run: curl -fsS -o /dev/null -w "backend %{http_code}\n" https://users-config-backend.onrender.com/health
-
+        run: >
+          curl -fsS -o /dev/null -w "backend (boot) %{http_code} in %{time_total}s\n"
+          --max-time 15 --retry 6 --retry-delay 15 --retry-all-errors
+          https://users-config-backend.onrender.com/health
       - name: Ping Trading Core
-        run: curl -fsS -o /dev/null -w "trading-core %{http_code}\n" https://trading-core-qthd.onrender.com/health
+        run: curl -fsS -o /dev/null -w "trading-core %{http_code}\n" --max-time 20 https://trading-core-qthd.onrender.com/health
 
       - name: Ping Frontend
-        run: curl -fsS -o /dev/null -w "frontend %{http_code}\n" https://stamina-frontend.onrender.com/
+        run: curl -fsS -o /dev/null -w "frontend %{http_code}\n" --max-time 20 https://stamina-frontend.onrender.com/
