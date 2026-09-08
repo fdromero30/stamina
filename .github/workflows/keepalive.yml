@@ -9,38 +9,50 @@
 # públicos tras ~60 días sin actividad en el repo. Hacer push / merge en la
 # rama default re-activa el cron. Si el keepalive deja de correr, comprueba:
 #   GitHub → Actions → "Keep Render Services Alive" → "Enable workflow".
+#
 name: Keep Render Services Alive
 
 on:
   schedule:
     # Cada 5 minutos — muy por debajo de la ventana de 15 min de Render,
-    # incluso con las desviaciones del cron de GitHub (~1-5 min).
+    # incluso con las desviaciones del cron de GitHub (~1-5 min)..
     - cron: '*/5 * * * *'
   workflow_dispatch: # permite ejecución manual desde la UI de GitHub
 
 # Principio de menor privilegio: el job solo necesita leer el repo
-# (aunque ni siquiera lo usa). No se otorgan tokens de escritura.
+# (aunque ni siquiera lo usa. No se otorgan tokens de escritura.))..
 permissions:
   contents: read
 
 jobs:
   keepalive:
     runs-on: ubuntu-latest
-    # Cada servicio se pingea en un step independiente: un fallo/timeout en uno
-    # (p. ej. cold-start del JVM del backend) NO impide despertar a los otros.
-    timeout-minutes: 10
+    # Presupuesto total holgado: el backend Java puede tardar ~4-5 min en
+    # arrancar en frío (JVM + Spring Boot + pool a Supabase en plan free)..
+    # Con `continue-on-error: true` en cada step, un cold-start largo del Java
+    # nunca impide pingear a Python y al frontend.
+    timeout-minutes: 15
     steps:
-      # El backend Java (Spring Boot/JVM) es un arranque lento: en plan free el
-      # cold-start puede tardar 30-90s. `--max-time` generoso + `--retry-all-errors`
-      # hace que el ping siga esperando (y despertando) al servicio aunque al
-      # primer intento reciba 502/000 mientras el contenedor bootea.
+      # El backend Java (Spring Boot/JVM) es un arranque lento: el cold-start en
+      # el plan free puede tardar minutos (medido: ~3-4 min cuando duerme))..
+      # `--max-time` generoso + `--retry-all-errors` hacen que el ping siga
+      # esperando (y despertando) al servicio aunque los primeros intentos
+      # reciban 502/000/504 mientras el contenedor bootea.
       - name: Ping Users Config Backend
+        continue-on-error: true
         run: >
           curl -fsS -o /dev/null -w "backend (boot) %{http_code} in %{time_total}s\n"
-          --max-time 15 --retry 6 --retry-delay 15 --retry-all-errors
+          --max-time 20 --retry 7 --retry-delay 20 --retry-all-errors
           https://users-config-backend.onrender.com/health
       - name: Ping Trading Core
-        run: curl -fsS -o /dev/null -w "trading-core %{http_code}\n" --max-time 20 https://trading-core-qthd.onrender.com/health
-
+        continue-on-error: true
+        run: >
+          curl -fsS -o /dev/null -w "trading-core %{http_code}\n"
+          --max-time 20 --retry 2 --retry-delay 15 --retry-all-errors
+          https://trading-core-qthd.onrender.com/health
       - name: Ping Frontend
-        run: curl -fsS -o /dev/null -w "frontend %{http_code}\n" --max-time 20 https://stamina-frontend.onrender.com/
+        continue-on-error: true
+        run: >
+          curl -fsS -o /dev/null -w "frontend %{http_code}\n"
+          --max-time 25 --retry 3 --retry-delay 15 --retry-all-errors
+          https://stamina-frontend.onrender.com/
